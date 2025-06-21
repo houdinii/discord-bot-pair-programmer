@@ -1,0 +1,15 @@
+discord.py
+httpx==0.27.2
+langchain
+langchain_community
+aiofiles
+python-dotenv
+boto3
+PyGithub
+asyncpg
+sqlalchemy
+alembic
+PyPDF2
+python-magic
+tiktoken
+pinecone
