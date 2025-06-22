@@ -52,7 +52,10 @@ class VectorService:
             "channel_id": channel_id,
             "ai_model": ai_model,
             "timestamp": ts,
-            "type": "conversation"
+            "type": "conversation",
+            # Add these fields for search display
+            "message": message,
+            "response": response
         }])
         return vid
 
@@ -113,17 +116,25 @@ class VectorService:
             if m["score"] < 0.7:
                 continue
             md = m["metadata"]
-            text = {
-                "conversation": f"Prev: {md['message']} → {md['response']}",
-                "memory": f"Memory [{md['tag']}]: {md['content']}",
-                "document": f"Doc [{md.get('filename', '')}]: {md.get('content', '')}",
-                "github": f"GH [{md.get('repo_name', '')}]: {md.get('content', '')}",
-            }.get(md["type"], md.get("content", ""))
+
+            # Build context text based on type
+            if md["type"] == "conversation":
+                text = f"Previous conversation:\nUser: {md.get('message', 'N/A')}\nAssistant: {md.get('response', 'N/A')}"
+            elif md["type"] == "memory":
+                text = f"Memory [{md.get('tag', 'N/A')}]: {md.get('content', 'N/A')}"
+            elif md["type"] == "document":
+                text = f"Document [{md.get('filename', 'N/A')}]: {md.get('content', 'N/A')}"
+            elif md["type"] == "github":
+                text = f"GitHub [{md.get('repo_name', 'N/A')}]: {md.get('content', 'N/A')}"
+            else:
+                text = md.get('chunk_text', md.get('content', 'N/A'))
+
             if length + len(text) > max_context_length:
                 break
             parts.append(text)
             length += len(text)
-        return "\n\n".join(parts)
+
+        return "\n\n".join(parts) if parts else ""
 
     async def delete_by_tag(self, channel_id: str, tag: str) -> bool:
         # Find all memory entries matching tag

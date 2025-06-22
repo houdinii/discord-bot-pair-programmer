@@ -1,3 +1,4 @@
+# cogs/ai_chat.py
 import discord
 from discord.ext import commands
 
@@ -14,90 +15,54 @@ class AIChatCog(commands.Cog):
     @commands.command(name='chat')
     async def chat_with_ai(self, ctx, provider: str = 'openai', model: str = 'gpt-4', *, message: str):
         """
-        Debug version of !chat that prints/logs each step and surfaces errors.
+        Chat with AI models with context from previous conversations
+        Usage: !chat openai gpt-4 How do I implement a binary search?
+        Usage: !chat anthropic claude-3-sonnet What's the difference between async and sync?
         """
-        try:
-            # 1) Acknowledge we got the command
-            print(f"[DEBUG] !chat invoked: provider={provider}, model={model}, message={message}")
-            await ctx.send("🔍 Debug: Received your request. Fetching context…")
 
-            # 2) Show typing
+        # Validate provider
+        if provider not in ['openai', 'anthropic']:
+            await ctx.send("❌ Provider must be 'openai' or 'anthropic'")
+            return
+
+        try:
+            # Show typing indicator
             async with ctx.typing():
-                # 3) Get context
+                # Get relevant context from vector database
                 context = await self.vector_service.get_context_for_ai(
                     query=message,
                     channel_id=str(ctx.channel.id),
                     max_context_length=2000
                 )
-                print(f"[DEBUG] Context fetched: {context!r}")
-                await ctx.send(f"🔍 Debug: Context length = {len(context)}")
 
-                # 4) Get AI response
+                # Get AI response with context - FIXED PARAMETERS
                 response = await self.ai_service.get_ai_response(
-                    messages=[{"role": "user", "content": message}],
                     provider=provider,
                     model=model,
+                    user_message=message,
                     context=context
                 )
-                print(f"[DEBUG] AI responded: {response!r}")
 
-            # 5) Send it back
-            await ctx.send(f"**{provider.title()} ({model}):**\n```\n{response}\n```")
+                # Store conversation in vector database
+                await self.vector_service.store_conversation(
+                    user_id=str(ctx.author.id),
+                    channel_id=str(ctx.channel.id),
+                    message=message,
+                    response=response,
+                    ai_model=f"{provider}:{model}"
+                )
+
+            # Split long responses
+            if len(response) > 2000:
+                chunks = [response[i:i + 2000] for i in range(0, len(response), 2000)]
+                for chunk in chunks:
+                    await ctx.send(f"```\n{chunk}\n```")
+            else:
+                await ctx.send(f"**{provider.title()} ({model}):**\n```\n{response}\n```")
 
         except Exception as e:
-            # 6) If anything blows up, log it and notify the channel
-            print(f"[ERROR] Exception in !chat handler:", exc_info=True)
-            await ctx.send(f"❌ Debug: I hit an error: `{e}`")
-
-    # @commands.command(name='chat')
-    # async def chat_with_ai(self, ctx, provider: str = 'openai', model: str = 'gpt-4', *, message: str):
-    #     """
-    #     Chat with AI models with context from previous conversations
-    #     Usage: !chat OpenAI GPT-4 How do I implement a binary search?
-    #     Usage: !chat anthropic claude-3-sonnet What's the difference between async and sync?
-    #     """
-    #
-    #     # Validate provider and model
-    #     if provider not in ['openai', 'anthropic']:
-    #         await ctx.send("❌ Provider must be 'openai' or 'anthropic'")
-    #         return
-    #
-    #     # Show typing indicator
-    #     async with ctx.typing():
-    #         # Get relevant context from vector database
-    #         context = await self.vector_service.get_context_for_ai(
-    #             query=message,
-    #             channel_id=str(ctx.channel.id),
-    #             max_context_length=2000
-    #         )
-    #
-    #         # Build messages for AI
-    #         messages = [{"role": "user", "content": message}]
-    #
-    #         # Get AI response with context
-    #         response = await self.ai_service.get_ai_response(
-    #             messages=messages,
-    #             provider=provider,
-    #             model=model,
-    #             context=context
-    #         )
-    #
-    #         # Store conversation in vector database
-    #         await self.vector_service.store_conversation(
-    #             user_id=str(ctx.author.id),
-    #             channel_id=str(ctx.channel.id),
-    #             message=message,
-    #             response=response,
-    #             ai_model=f"{provider}:{model}"
-    #         )
-    #
-    #         # Split long responses
-    #         if len(response) > 2000:
-    #             chunks = [response[i:i + 2000] for i in range(0, len(response), 2000)]
-    #             for chunk in chunks:
-    #                 await ctx.send(f"```\n{chunk}\n```")
-    #         else:
-    #             await ctx.send(f"**{provider.title()} ({model}):**\n```\n{response}\n```")
+            print(f"[ERROR] Exception in !chat handler: {e}")
+            await ctx.send(f"❌ Error: {str(e)}")
 
     @commands.command(name='models')
     async def list_models(self, ctx):
@@ -158,13 +123,13 @@ class AIChatCog(commands.Cog):
 
                 if metadata['type'] == 'conversation':
                     title = f"Conversation (Score: {score:.2f})"
-                    value = f"**Q:** {metadata['message'][:100]}...\n**A:** {metadata['response'][:100]}..."
+                    value = f"**Q:** {metadata.get('message', 'N/A')[:100]}...\n**A:** {metadata.get('response', 'N/A')[:100]}..."
                 elif metadata['type'] == 'memory':
-                    title = f"Memory: {metadata['tag']} (Score: {score:.2f})"
-                    value = metadata['content'][:200] + "..."
+                    title = f"Memory: {metadata.get('tag', 'N/A')} (Score: {score:.2f})"
+                    value = metadata.get('content', 'N/A')[:200] + "..."
                 elif metadata['type'] == 'document':
-                    title = f"Document: {metadata['filename']} (Score: {score:.2f})"
-                    value = metadata['content'][:200] + "..."
+                    title = f"Document: {metadata.get('filename', 'N/A')} (Score: {score:.2f})"
+                    value = metadata.get('content', 'N/A')[:200] + "..."
                 else:
                     title = f"{metadata['type'].title()} (Score: {score:.2f})"
                     value = str(metadata.get('content', ''))[:200] + "..."
