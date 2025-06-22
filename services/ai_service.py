@@ -2,7 +2,8 @@
 
 import os
 
-from langchain.chat_models import ChatOpenAI, ChatAnthropic
+from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
 
 
@@ -10,14 +11,14 @@ class AIService:
     def __init__(self):
         # Updated with correct model names
         self.openai_llm = ChatOpenAI(
-            model_name="chatgpt-4o-latest",  # Updated default
+            model="chatgpt-4o-latest",  # Updated default
             temperature=0.7,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            api_key=os.getenv("OPENAI_API_KEY")
         )
         self.anthropic_llm = ChatAnthropic(
-            model="claude-sonnet-4-0",  # Updated default
+            model_name="claude-sonnet-4-0",  # Updated default
             temperature=0.7,
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+            api_key=os.getenv("ANTHROPIC_API_KEY")
         )
 
         # Available models mapping
