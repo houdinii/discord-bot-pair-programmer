@@ -1,14 +1,18 @@
 # services/ai_service.py
 
 import os
-
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
+from utils.logger import get_logger, log_method
+
+logger = get_logger(__name__)
 
 
 class AIService:
     def __init__(self):
+        logger.logger.info("Initializing AIService")
+
         # Updated with correct model names
         self.openai_llm = ChatOpenAI(
             model="chatgpt-4o-latest",  # Updated default
@@ -37,6 +41,10 @@ class AIService:
             ]
         }
 
+        logger.logger.info(
+            f"AIService initialized with {len(self.available_models['openai'])} OpenAI models and {len(self.available_models['anthropic'])} Anthropic models")
+
+    @log_method()
     async def get_ai_response(
             self,
             provider: str,
@@ -48,35 +56,60 @@ class AIService:
         provider: "openai" or "anthropic"
         model: specific model name
         """
+        logger.log_data('IN', 'AI_REQUEST', {
+            'provider': provider,
+            'model': model,
+            'message_length': len(user_message),
+            'has_context': bool(context),
+            'context_length': len(context) if context else 0
+        })
+
         # Build LangChain messages
         msgs = []
         if context:
-            msgs.append(SystemMessage(content=f"You are a helpful pair-programmer assistant.\nContext:\n{context}"))
+            system_content = f"You are a helpful pair-programmer assistant.\nContext:\n{context}"
+            msgs.append(SystemMessage(content=system_content))
+            logger.logger.debug(f"Added system message with {len(context)} chars of context")
+
         msgs.append(HumanMessage(content=user_message))
+
+        logger.logger.debug(f"Sending request to {provider}/{model}")
 
         # Choose the right LLM with specific model
         if provider == "openai":
             llm = ChatOpenAI(
-                model_name=model,
+                model=model,
                 temperature=0.7,
-                openai_api_key=os.getenv("OPENAI_API_KEY")
+                api_key=os.getenv("OPENAI_API_KEY")
             )
         else:  # anthropic
             llm = ChatAnthropic(
-                model=model,
+                model_name=model,
                 temperature=0.7,
-                anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+                api_key=os.getenv("ANTHROPIC_API_KEY")
             )
 
         # Get response
         result = await llm.agenerate([msgs])
-        return result.generations[0][0].text
+        response_text = result.generations[0][0].text
+
+        logger.log_data('OUT', 'AI_RESPONSE', {
+            'provider': provider,
+            'model': model,
+            'response_length': len(response_text),
+            'response_preview': response_text[:200] + '...' if len(response_text) > 200 else response_text
+        })
+
+        return response_text
 
     def count_tokens(self, text: str, model: str = "gpt-4") -> int:
         # If you still need token counting
         from tiktoken import encoding_for_model
         try:
             enc = encoding_for_model(model)
-            return len(enc.encode(text))
-        except Exception:
+            token_count = len(enc.encode(text))
+            logger.logger.debug(f"Counted {token_count} tokens for {len(text)} chars")
+            return token_count
+        except Exception as e:
+            logger.logger.warning(f"Token counting failed: {e}, using fallback")
             return len(text.split()) * 1  # rough fallback

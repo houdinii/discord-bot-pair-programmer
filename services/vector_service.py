@@ -11,6 +11,9 @@ from pinecone import Pinecone, ServerlessSpec
 from langchain.schema import Document
 
 from dotenv import load_dotenv
+from utils.logger import get_logger, log_method
+
+logger = get_logger(__name__)
 
 load_dotenv()
 
@@ -41,11 +44,21 @@ class VectorService:
     def __init__(self):
         self.vector_store = vector_store
         self.embeddings = embeddings
+        logger.logger.info("VectorService initialized with Pinecone")
 
+    @log_method()
     async def store_conversation(self, user_id: str, channel_id: str,
                                  message: str, response: str,
                                  ai_model: str) -> str:
         """Store a conversation in the vector database"""
+        logger.log_data('IN', 'STORE_CONVERSATION', {
+            'user_id': user_id,
+            'channel_id': channel_id,
+            'message_preview': message[:100] + '...' if len(message) > 100 else message,
+            'response_preview': response[:100] + '...' if len(response) > 100 else response,
+            'ai_model': ai_model
+        })
+
         ts = datetime.now(timezone.utc).isoformat()
         combined = f"User: {message}\nAssistant: {response}"
         vid = _gen_id(combined, user_id, ts)
@@ -65,6 +78,12 @@ class VectorService:
         )
 
         self.vector_store.add_documents([doc], ids=[vid])
+
+        logger.log_data('OUT', 'CONVERSATION_STORED', {
+            'vector_id': vid,
+            'timestamp': ts
+        })
+
         return vid
 
     async def store_memory(self, user_id: str, channel_id: str,
@@ -90,12 +109,21 @@ class VectorService:
         self.vector_store.add_documents([doc], ids=[vid])
         return vid
 
+    @log_method()
     async def search_similar(self, query: str,
                              channel_id: str = None,
                              user_id: str = None,
                              content_type: List[str] = None,
                              top_k: int = 5) -> List[Dict]:
         """Search for similar content in the vector database"""
+        logger.log_data('IN', 'VECTOR_SEARCH', {
+            'query': query[:100] + '...' if len(query) > 100 else query,
+            'channel_id': channel_id,
+            'user_id': user_id,
+            'content_type': content_type,
+            'top_k': top_k
+        })
+
         # Build filter
         filter_dict = {}
 
@@ -113,7 +141,7 @@ class VectorService:
             filter=filter_dict if filter_dict else None
         )
 
-        return [
+        formatted_results = [
             {
                 "id": doc.metadata.get("id"),
                 "score": 1 - score,  # Convert distance to similarity score
@@ -123,10 +151,25 @@ class VectorService:
             for doc, score in results
         ]
 
+        logger.log_data('OUT', 'SEARCH_RESULTS', {
+            'results_count': len(formatted_results),
+            'scores': [r['score'] for r in formatted_results],
+            'types': [r['metadata'].get('type') for r in formatted_results]
+        })
+
+        return formatted_results
+
+    @log_method()
     async def get_context_for_ai(self, query: str,
                                  channel_id: str,
                                  max_context_length: int = 3000) -> str:
         """Get relevant context for AI response"""
+        logger.log_data('IN', 'GET_AI_CONTEXT', {
+            'query': query[:100] + '...' if len(query) > 100 else query,
+            'channel_id': channel_id,
+            'max_context_length': max_context_length
+        })
+
         results = await self.search_similar(
             query=query,
             channel_id=channel_id,
@@ -135,9 +178,11 @@ class VectorService:
 
         parts = []
         length = 0
+        used_results = 0
 
         for result in results:
             if result["score"] < 0.7:
+                logger.logger.debug(f"Skipping result with low score: {result['score']}")
                 continue
 
             md = result["metadata"]
@@ -155,12 +200,22 @@ class VectorService:
                 text = result.get('content', md.get('content', 'N/A'))
 
             if length + len(text) > max_context_length:
+                logger.logger.debug(f"Reached max context length at {length} chars")
                 break
 
             parts.append(text)
             length += len(text)
+            used_results += 1
 
-        return "\n\n".join(parts) if parts else ""
+        context = "\n\n".join(parts) if parts else ""
+
+        logger.log_data('OUT', 'AI_CONTEXT_BUILT', {
+            'total_length': len(context),
+            'parts_used': used_results,
+            'total_results': len(results)
+        })
+
+        return context
 
     async def delete_by_tag(self, channel_id: str, tag: str) -> bool:
         """Delete memories by tag"""
