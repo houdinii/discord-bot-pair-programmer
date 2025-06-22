@@ -1,10 +1,6 @@
 import os
 
 import os
-
-# Version 0.1.2.3
-print("Starting Pair Programmer Bot Version 0.1.2.3...")
-
 import discord
 from discord.ext import commands
 import asyncio
@@ -15,6 +11,8 @@ from cogs.ai_chat import AIChatCog
 from cogs.memory import MemoryCog
 from cogs.file_manager import FileManagerCog
 from cogs.github_integration import GitHubCog
+# Version 0.1.2.3
+print("Starting Pair Programmer Bot Version 0.1.2.3...")
 
 load_dotenv()
 
