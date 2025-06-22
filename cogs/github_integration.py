@@ -5,14 +5,19 @@ import discord
 from discord.ext import commands
 from github import Github
 
-from database.models import GitHubRepo, get_db
 from config import GITHUB_TOKEN
+from database.models import GitHubRepo, get_db
+from services.vector_service import VectorService
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GitHubCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.github = Github(GITHUB_TOKEN)
+        self.vector_service = VectorService()
 
     @commands.command(name='address')
     async def add_repository(self, ctx, repo_url: str):
@@ -28,85 +33,184 @@ class GitHubCog(commands.Cog):
             repo_name = repo_url
 
         try:
-            # Verify repository exists and we have access
-            repo = self.github.get_repo(repo_name)
+            # Show typing indicator for longer operation
+            async with ctx.typing():
+                # Verify repository exists and we have access
+                repo = self.github.get_repo(repo_name)
 
-            # Save to database
+                # Save to database
+                db = get_db()
+
+                try:
+                    # Check if already exists
+                    existing = db.query(GitHubRepo).filter(
+                        GitHubRepo.repo_name == repo_name,
+                        GitHubRepo.channel_id == str(ctx.channel.id)
+                    ).first()
+
+                    if existing:
+                        await ctx.send(f"❌ Repository {repo_name} is already tracked in this channel")
+                        db.close()
+                        return
+
+                    github_repo = GitHubRepo(
+                        repo_name=repo_name,
+                        repo_url=repo.html_url,
+                        channel_id=str(ctx.channel.id),
+                        is_active=True,
+                        added_by=str(ctx.author.id),
+                        added_timestamp=datetime.now(UTC)
+                    )
+
+                    db.add(github_repo)
+                    db.commit()
+
+                    # Ingest repository into vector database
+                    readme_content = None
+                    try:
+                        readme = repo.get_readme()
+                        readme_content = readme.decoded_content.decode('utf-8')
+                    except:
+                        logger.logger.info(f"No README found for {repo_name}")
+
+                    # Get topics/tags
+                    topics = repo.get_topics() if hasattr(repo, 'get_topics') else []
+
+                    # Store in vector database
+                    vector_ids = await self.vector_service.store_github_repo(
+                        repo_name=repo_name,
+                        channel_id=str(ctx.channel.id),
+                        readme_content=readme_content,
+                        description=repo.description,
+                        language=repo.language,
+                        topics=topics
+                    )
+
+                    embed = discord.Embed(
+                        title="Repository Added",
+                        description=f"Now tracking: **{repo_name}**",
+                        color=0x00ff00
+                    )
+                    embed.add_field(name="Description", value=repo.description or "No description", inline=False)
+                    embed.add_field(name="Language", value=repo.language or "Unknown", inline=True)
+                    embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
+                    embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
+                    embed.add_field(name="Vector Storage", value=f"✅ Indexed {len(vector_ids)} chunks", inline=False)
+
+                    await ctx.send(embed=embed)
+                finally:
+                    db.close()
+
+        except Exception as e:
+            await ctx.send(f"❌ Error adding repository: {str(e)}")
+            logger.logger.error(f"Error in add_repository: {str(e)}", exc_info=True)
+
+    @commands.command(name='issues')
+    async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
+        """
+        List issues from a tracked repository
+        Usage: !issues user/repo
+        Usage: !issues user/repo closed
+        """
+        try:
+            # Verify repo is tracked
             db = get_db()
-
             try:
-                # Check if already exists
-                existing = db.query(GitHubRepo).filter(
+                tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
-                    GitHubRepo.channel_id == str(ctx.channel.id)
+                    GitHubRepo.channel_id == str(ctx.channel.id),
+                    GitHubRepo.is_active == True
                 ).first()
 
-                if existing:
-                    await ctx.send(f"❌ Repository {repo_name} is already tracked in this channel")
-                    db.close()
+                if not tracked_repo:
+                    await ctx.send(f"❌ Repository {repo_name} is not tracked in this channel")
                     return
 
-                github_repo = GitHubRepo(
-                    repo_name=repo_name,
-                    repo_url=repo.html_url,
-                    channel_id=str(ctx.channel.id),
-                    is_active=True,
-                    added_by=str(ctx.author.id),
-                    added_timestamp=datetime.now(UTC)
-                )
+                repo = self.github.get_repo(repo_name)
+                issues = list(repo.get_issues(state=state))[:10]  # Limit to 10
 
-                db.add(github_repo)
-                db.commit()
+                # FIX: Check if issues list is empty
+                if not issues:
+                    await ctx.send(f"✨ No {state} issues found in {repo_name}")
+                    return
 
                 embed = discord.Embed(
-                    title="Repository Added",
-                    description=f"Now tracking: **{repo_name}**",
-                    color=0x00ff00
+                    title=f"{state.title()} Issues - {repo_name}",
+                    color=0xff6b6b if state == 'open' else 0x00ff00
                 )
-                embed.add_field(name="Description", value=repo.description or "No description", inline=False)
-                embed.add_field(name="Language", value=repo.language or "Unknown", inline=True)
-                embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
-                embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
+
+                for issue in issues:
+                    # FIX: Safely handle labels
+                    labels = ", ".join([label.name for label in issue.labels]) if issue.labels else "No labels"
+
+                    # Truncate title if needed
+                    title = issue.title[:50] + "..." if len(issue.title) > 50 else issue.title
+
+                    embed.add_field(
+                        name=f"#{issue.number}: {title}",
+                        value=f"**Author:** {issue.user.login}\n**Labels:** {labels}\n[View Issue]({issue.html_url})",
+                        inline=False
+                    )
 
                 await ctx.send(embed=embed)
             finally:
                 db.close()
 
         except Exception as e:
-            await ctx.send(f"❌ Error adding repository: {str(e)}")
+            await ctx.send(f"❌ Error listing issues: {str(e)}")
+            logger.logger.error(f"Error in list_issues: {str(e)}", exc_info=True)
 
-    @commands.command(name='repos')
-    async def list_repositories(self, ctx):
-        """List all tracked repositories in this channel"""
-        db = get_db()
+    @commands.command(name='prs')
+    async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
+        """
+        List pull requests from a tracked repository
+        Usage: !prs user/repo
+        Usage: !prs user/repo closed
+        """
         try:
-            # FIX: is_active comparison was wrong
-            repos = db.query(GitHubRepo).filter(
-                GitHubRepo.channel_id == str(ctx.channel.id),
-                GitHubRepo.is_active == True  # Use == instead of 'is'
-            ).all()
+            # Verify repo is tracked
+            db = get_db()
+            try:
+                tracked_repo = db.query(GitHubRepo).filter(
+                    GitHubRepo.repo_name == repo_name,
+                    GitHubRepo.channel_id == str(ctx.channel.id),
+                    GitHubRepo.is_active == True
+                ).first()
 
-            if not repos:
-                await ctx.send("❌ No repositories are being tracked in this channel")
-                return
+                if not tracked_repo:
+                    await ctx.send(f"❌ Repository {repo_name} is not tracked in this channel")
+                    return
 
-            embed = discord.Embed(
-                title="Tracked Repositories",
-                color=0x0099ff
-            )
+                repo = self.github.get_repo(repo_name)
+                prs = list(repo.get_pulls(state=state))[:10]  # Limit to 10
 
-            for repo in repos:
-                embed.add_field(
-                    name=repo.repo_name,
-                    value=f"[View on GitHub]({repo.repo_url})\nAdded: {repo.added_timestamp.strftime('%Y-%m-%d')}",
-                    inline=True
+                # FIX: Check if PRs list is empty
+                if not prs:
+                    await ctx.send(f"✨ No {state} pull requests found in {repo_name}")
+                    return
+
+                embed = discord.Embed(
+                    title=f"{state.title()} Pull Requests - {repo_name}",
+                    color=0x28a745 if state == 'open' else 0x6f42c1
                 )
 
-            await ctx.send(embed=embed)
+                for pr in prs:
+                    # Truncate title if needed
+                    title = pr.title[:50] + "..." if len(pr.title) > 50 else pr.title
+
+                    embed.add_field(
+                        name=f"#{pr.number}: {title}",
+                        value=f"**Author:** {pr.user.login}\n**Branch:** {pr.head.ref} → {pr.base.ref}\n[View PR]({pr.html_url})",
+                        inline=False
+                    )
+
+                await ctx.send(embed=embed)
+            finally:
+                db.close()
+
         except Exception as e:
-            await ctx.send(f"❌ Error listing repositories: {str(e)}")
-        finally:
-            db.close()
+            await ctx.send(f"❌ Error listing pull requests: {str(e)}")
+            logger.logger.error(f"Error in list_pull_requests: {str(e)}", exc_info=True)
 
     @commands.command(name='repoinfo')
     async def repository_info(self, ctx, repo_name: str = None):
@@ -122,11 +226,10 @@ class GitHubCog(commands.Cog):
             # Check if repo is tracked in this channel
             db = get_db()
             try:
-                # FIX: is_active comparison was wrong
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True  # Use == instead of 'is'
+                    GitHubRepo.is_active == True
                 ).first()
 
                 if not tracked_repo:
@@ -146,17 +249,27 @@ class GitHubCog(commands.Cog):
                 embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
                 embed.add_field(name="Forks", value=repo.forks_count, inline=True)
                 embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
-                embed.add_field(name="Open PRs", value=len(list(repo.get_pulls(state='open'))), inline=True)
+
+                # FIX: Safely get PR count
+                try:
+                    pr_count = len(list(repo.get_pulls(state='open')))
+                except:
+                    pr_count = "N/A"
+
+                embed.add_field(name="Open PRs", value=pr_count, inline=True)
                 embed.add_field(name="Default Branch", value=repo.default_branch, inline=True)
 
-                # Recent commits
-                commits = list(repo.get_commits()[:3])
-                if commits:
-                    recent_commits = "\n".join([
-                        f"• {commit.commit.message.split(chr(10))[0][:50]}... by {commit.commit.author.name}"
-                        for commit in commits
-                    ])
-                    embed.add_field(name="Recent Commits", value=recent_commits, inline=False)
+                # Recent commits - with error handling
+                try:
+                    commits = list(repo.get_commits()[:3])
+                    if commits:
+                        recent_commits = "\n".join([
+                            f"• {commit.commit.message.split(chr(10))[0][:50]}... by {commit.commit.author.name}"
+                            for commit in commits
+                        ])
+                        embed.add_field(name="Recent Commits", value=recent_commits, inline=False)
+                except:
+                    logger.logger.warning(f"Could not fetch commits for {repo_name}")
 
                 await ctx.send(embed=embed)
             finally:
@@ -164,6 +277,7 @@ class GitHubCog(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"❌ Error getting repository info: {str(e)}")
+            logger.logger.error(f"Error in repository_info: {str(e)}", exc_info=True)
 
     @commands.command(name='issues')
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
@@ -381,6 +495,28 @@ class GitHubCog(commands.Cog):
             await ctx.send(embed=embed)
         finally:
             db.close()
+
+    @commands.command(name='namespace_info')
+    async def namespace_info(self, ctx):
+        """Show vector database namespace information"""
+        channel_id = str(ctx.channel.id)
+
+        # Get stats for this namespace
+        results = await self.vector_service.search_similar(
+            query="test",
+            channel_id=channel_id,
+            top_k=1
+        )
+
+        embed = discord.Embed(
+            title="Namespace Information",
+            color=0x0099ff
+        )
+
+        embed.add_field(name="Channel ID (Namespace)", value=channel_id, inline=False)
+        embed.add_field(name="Vectors in Namespace", value="Use !stats for details", inline=False)
+
+        await ctx.send(embed=embed)
 
 
 async def setup(bot):

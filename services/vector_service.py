@@ -30,9 +30,8 @@ if not pc.has_index(INDEX_NAME):
         spec=ServerlessSpec(cloud="aws", region="us-east-1"),
     )
 
-# Initialize embeddings and vector store
+# Initialize embeddings
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-vector_store = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
 
 
 def _gen_id(text: str, user: str, ts: str) -> str:
@@ -42,9 +41,17 @@ def _gen_id(text: str, user: str, ts: str) -> str:
 
 class VectorService:
     def __init__(self):
-        self.vector_store = vector_store
         self.embeddings = embeddings
+        self.index_name = INDEX_NAME
         logger.logger.info("VectorService initialized with Pinecone")
+
+    def _get_vector_store(self, namespace: str = None):
+        """Get a vector store with optional namespace"""
+        return PineconeVectorStore(
+            index_name=self.index_name,
+            embedding=self.embeddings,
+            namespace=namespace
+        )
 
     @log_method()
     async def store_conversation(self, user_id: str, channel_id: str,
@@ -54,6 +61,7 @@ class VectorService:
         logger.log_data('IN', 'STORE_CONVERSATION', {
             'user_id': user_id,
             'channel_id': channel_id,
+            'namespace': channel_id,
             'message_preview': message[:100] + '...' if len(message) > 100 else message,
             'response_preview': response[:100] + '...' if len(response) > 100 else response,
             'ai_model': ai_model
@@ -77,11 +85,14 @@ class VectorService:
             }
         )
 
-        self.vector_store.add_documents([doc], ids=[vid])
+        # Use channel_id as namespace
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[vid])
 
         logger.log_data('OUT', 'CONVERSATION_STORED', {
             'vector_id': vid,
-            'timestamp': ts
+            'timestamp': ts,
+            'namespace': channel_id
         })
 
         return vid
@@ -106,8 +117,110 @@ class VectorService:
             }
         )
 
-        self.vector_store.add_documents([doc], ids=[vid])
+        # Use channel_id as namespace
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[vid])
         return vid
+
+    @log_method()
+    async def store_github_repo(self, repo_name: str, channel_id: str,
+                                readme_content: str = None,
+                                description: str = None,
+                                language: str = None,
+                                topics: List[str] = None) -> List[str]:
+        """Store GitHub repository information in vector database"""
+        logger.log_data('IN', 'STORE_GITHUB_REPO', {
+            'repo_name': repo_name,
+            'channel_id': channel_id,
+            'has_readme': bool(readme_content),
+            'language': language
+        })
+
+        ts = datetime.now(timezone.utc).isoformat()
+        vector_ids = []
+
+        # Store repository overview
+        overview = f"GitHub Repository: {repo_name}"
+        if description:
+            overview += f"\nDescription: {description}"
+        if language:
+            overview += f"\nLanguage: {language}"
+        if topics:
+            overview += f"\nTopics: {', '.join(topics)}"
+
+        overview_id = _gen_id(overview, repo_name, ts + "_overview")
+
+        doc_overview = Document(
+            page_content=overview,
+            metadata={
+                "id": overview_id,
+                "repo_name": repo_name,
+                "channel_id": channel_id,
+                "timestamp": ts,
+                "type": "github",
+                "github_type": "overview",
+                "language": language
+            }
+        )
+
+        # Store README content if available
+        docs_to_add = [doc_overview]
+        ids_to_add = [overview_id]
+        vector_ids.append(overview_id)
+
+        if readme_content:
+            # Split README into chunks if it's too long
+            chunks = self._chunk_text(readme_content, chunk_size=1500)
+
+            for i, chunk in enumerate(chunks):
+                chunk_id = _gen_id(chunk, repo_name, ts + f"_readme_{i}")
+                doc_readme = Document(
+                    page_content=f"README for {repo_name} (part {i + 1}/{len(chunks)}):\n{chunk}",
+                    metadata={
+                        "id": chunk_id,
+                        "repo_name": repo_name,
+                        "channel_id": channel_id,
+                        "timestamp": ts,
+                        "type": "github",
+                        "github_type": "readme",
+                        "chunk_index": i,
+                        "total_chunks": len(chunks)
+                    }
+                )
+                docs_to_add.append(doc_readme)
+                ids_to_add.append(chunk_id)
+                vector_ids.append(chunk_id)
+
+        # Use channel_id as namespace
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents(docs_to_add, ids=ids_to_add)
+
+        logger.log_data('OUT', 'GITHUB_REPO_STORED', {
+            'repo_name': repo_name,
+            'vector_ids_count': len(vector_ids),
+            'namespace': channel_id
+        })
+
+        return vector_ids
+
+    def _chunk_text(self, text: str, chunk_size: int = 1500) -> List[str]:
+        """Split text into chunks"""
+        chunks = []
+        lines = text.split('\n')
+        current_chunk = ""
+
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 > chunk_size:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += ("\n" if current_chunk else "") + line
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
 
     @log_method()
     async def search_similar(self, query: str,
@@ -119,6 +232,7 @@ class VectorService:
         logger.log_data('IN', 'VECTOR_SEARCH', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
+            'namespace': channel_id,
             'user_id': user_id,
             'content_type': content_type,
             'top_k': top_k
@@ -127,15 +241,17 @@ class VectorService:
         # Build filter
         filter_dict = {}
 
-        if channel_id:
-            filter_dict["channel_id"] = channel_id
+        # Note: namespace now handles channel_id filtering
         if user_id:
             filter_dict["user_id"] = user_id
         if content_type:
             filter_dict["type"] = {"$in": content_type}
 
+        # Use namespace for channel isolation
+        vector_store = self._get_vector_store(namespace=channel_id)
+
         # Use similarity search with score
-        results = self.vector_store.similarity_search_with_score(
+        results = vector_store.similarity_search_with_score(
             query,
             k=top_k,
             filter=filter_dict if filter_dict else None
@@ -154,7 +270,8 @@ class VectorService:
         logger.log_data('OUT', 'SEARCH_RESULTS', {
             'results_count': len(formatted_results),
             'scores': [r['score'] for r in formatted_results],
-            'types': [r['metadata'].get('type') for r in formatted_results]
+            'types': [r['metadata'].get('type') for r in formatted_results],
+            'namespace': channel_id
         })
 
         return formatted_results
@@ -167,6 +284,7 @@ class VectorService:
         logger.log_data('IN', 'GET_AI_CONTEXT', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
+            'namespace': channel_id,
             'max_context_length': max_context_length
         })
 
@@ -182,8 +300,8 @@ class VectorService:
         used_results = 0
 
         for result in results:
-            # FIX: Score is similarity (higher is better) after the inversion in search_similar
-            if result["score"] < 0.5:  # Changed from < 0.7 to < 0.5, and logic is now correct
+            # Score is similarity (higher is better) after the inversion in search_similar
+            if result["score"] < 0.5:  # Minimum relevance threshold
                 logger.logger.debug(f"Skipping result with low score: {result['score']}")
                 continue
 
@@ -199,7 +317,15 @@ class VectorService:
             elif md["type"] == "document":
                 text = f"Document [{md.get('filename', 'N/A')}]: {md.get('content', 'N/A')[:500]}..."
             elif md["type"] == "github":
-                text = f"GitHub [{md.get('repo_name', 'N/A')}]: {md.get('content', 'N/A')[:500]}..."
+                github_type = md.get('github_type', 'content')
+                repo_name = md.get('repo_name', 'Unknown')
+                if github_type == 'overview':
+                    text = f"GitHub Repository Info:\n{result.get('content', 'N/A')}"
+                elif github_type == 'readme':
+                    chunk_info = f"(part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)})"
+                    text = f"GitHub README {chunk_info}:\n{result.get('content', 'N/A')[:800]}..."
+                else:
+                    text = f"GitHub [{repo_name}]: {result.get('content', 'N/A')[:500]}..."
             else:
                 text = result.get('content', md.get('content', 'N/A'))
 
@@ -219,7 +345,8 @@ class VectorService:
             'total_length': len(context),
             'parts_used': used_results,
             'total_results': len(results),
-            'context_preview': context[:200] + '...' if len(context) > 200 else context
+            'context_preview': context[:200] + '...' if len(context) > 200 else context,
+            'namespace': channel_id
         })
 
         return context
@@ -335,8 +462,8 @@ class VectorService:
                 "type": "document"
             }
         )
-
-        self.vector_store.add_documents([doc], ids=[vid])
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[vid])
         return vid
 
     async def store_github_content(self, repo_name: str, content: str,
@@ -357,6 +484,6 @@ class VectorService:
                 "type": "github"
             }
         )
-
-        self.vector_store.add_documents([doc], ids=[vid])
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[vid])
         return vid
