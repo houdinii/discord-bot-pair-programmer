@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pinecone import Pinecone
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # 1) Initialize Pinecone client
@@ -21,7 +22,7 @@ if INDEX_NAME not in pc.list_indexes().names():
         region="us-east-1",  # your chosen region
         embed={  # integrated-embedding config
             "model": "llama-text-embed-v2",
-            "field_map": {"text": "chunk_text"}
+            "field_map": {"text": "text"}  # FIXED: Use "text" field directly
         }
     )
     # wait for index to be ready
@@ -47,33 +48,33 @@ class VectorService:
 
         index.upsert_records(records=[{
             "_id": vid,
-            "chunk_text": combined,
+            "text": combined,  # CHANGED: from "chunk_text" to "text"
             "user_id": user_id,
             "channel_id": channel_id,
             "ai_model": ai_model,
             "timestamp": ts,
             "type": "conversation",
-            # Add these fields for search display
             "message": message,
-            "response": response,
-        }], namespace="default")
+            "response": response
+        }], namespace='default')
         return vid
 
     async def store_memory(self, user_id: str, channel_id: str,
                            tag: str, content: str) -> str:
         ts = datetime.now(timezone.utc).isoformat()
-        text = f"Memory [{tag}]: {content}"
-        vid = _gen_id(text, user_id, ts)
+        text_content = f"Memory [{tag}]: {content}"
+        vid = _gen_id(text_content, user_id, ts)
 
         index.upsert_records(records=[{
             "_id": vid,
-            "chunk_text": text,
+            "text": text_content,  # CHANGED: from "chunk_text" to "text"
             "user_id": user_id,
             "channel_id": channel_id,
             "tag": tag,
             "timestamp": ts,
-            "type": "memory"
-        }], namespace="default")
+            "type": "memory",
+            "content": content  # Store original content for retrieval
+        }], namespace='default')
         return vid
 
     async def search_similar(self, query: str,
@@ -127,7 +128,7 @@ class VectorService:
             elif md["type"] == "github":
                 text = f"GitHub [{md.get('repo_name', 'N/A')}]: {md.get('content', 'N/A')}"
             else:
-                text = md.get('chunk_text', md.get('content', 'N/A'))
+                text = md.get('text', md.get('content', 'N/A'))
 
             if length + len(text) > max_context_length:
                 break
