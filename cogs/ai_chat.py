@@ -5,6 +5,7 @@ from discord.ext import commands
 from services.ai_service import AIService
 from services.vector_service import VectorService
 from utils.logger import get_logger, log_method
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -58,7 +59,7 @@ class AIChatCog(commands.Cog):
                 if i == 0:
                     await ctx.send(chunk)
                 else:
-                    # Add continuation marker for subsequent chunks
+                    # Add continuation marker for further chunks
                     await ctx.send(f"```\n{chunk}\n```" if not chunk.startswith("```") else chunk)
 
     @commands.command(name='chat')
@@ -142,6 +143,26 @@ class AIChatCog(commands.Cog):
                     'vector_id': vector_id,
                     'type': 'conversation'
                 })
+
+            if hasattr(self.bot, 'autosave_channels') and str(ctx.channel.id) in self.bot.autosave_channels:
+                # Check if the conversation seems important
+                important_keywords = ['project', 'using', 'stack', 'decided', 'will use', 'going with',
+                                      'authentication', 'database', 'api', 'endpoint', 'requirement']
+
+                message_lower = message.lower()
+                if any(keyword in message_lower for keyword in important_keywords):
+                    # Auto-save as memory
+                    tag = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    summary = f"Q: {message[:100]}... A: {response[:200]}..."
+
+                    await self.vector_service.store_memory(
+                        user_id=str(ctx.author.id),
+                        channel_id=str(ctx.channel.id),
+                        tag=tag,
+                        content=summary
+                    )
+
+                    logger.logger.info(f"Auto-saved conversation as memory with tag: {tag}")
 
             # Send response with proper chunking
             await self.send_long_message(ctx, response, provider, model)
@@ -260,6 +281,56 @@ class AIChatCog(commands.Cog):
 
             await ctx.send(embed=embed)
             logger.logger.info(f"Sent {len(results)} search results to {ctx.author}")
+
+    @commands.command(name='autosave')
+    @log_method()
+    async def toggle_autosave(self, ctx):
+        """Toggle automatic memory saving for important conversations"""
+        # Store this preference per channel
+        channel_id = str(ctx.channel.id)
+
+        # You could store this in a database or in-memory dict
+        if not hasattr(self.bot, 'autosave_channels'):
+            self.bot.autosave_channels = set()
+
+        if channel_id in self.bot.autosave_channels:
+            self.bot.autosave_channels.remove(channel_id)
+            await ctx.send("❌ Automatic memory saving disabled for this channel")
+        else:
+            self.bot.autosave_channels.add(channel_id)
+            await ctx.send("✅ Automatic memory saving enabled for this channel")
+
+    @commands.command(name='context')
+    @log_method()
+    async def show_context(self, ctx, *, query: str = "recent conversations"):
+        """Show what context would be retrieved for a query"""
+        async with ctx.typing():
+            context = await self.vector_service.get_context_for_ai(
+                query=query,
+                channel_id=str(ctx.channel.id),
+                max_context_length=4000
+            )
+
+            if not context:
+                await ctx.send("❌ No context found for this query")
+                return
+
+            # Split context into chunks for Discord
+            chunks = []
+            lines = context.split('\n')
+            current_chunk = "```\nRetrieved Context:\n"
+
+            for line in lines:
+                if len(current_chunk) + len(line) + 4 > 1990:  # 4 for closing ```
+                    chunks.append(current_chunk + "```")
+                    current_chunk = "```\n"
+                current_chunk += line + "\n"
+
+            if current_chunk != "```\n":
+                chunks.append(current_chunk + "```")
+
+            for chunk in chunks:
+                await ctx.send(chunk)
 
 
 async def setup(bot):

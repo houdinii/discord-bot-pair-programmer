@@ -9,6 +9,7 @@ from utils.logger import get_logger, log_method
 logger = get_logger(__name__)
 
 
+# noinspection PyArgumentList
 class AIService:
     def __init__(self):
         logger.logger.info("Initializing AIService")
@@ -66,10 +67,23 @@ class AIService:
 
         # Build LangChain messages
         msgs = []
+
+        # Enhanced system message with context
         if context:
-            system_content = f"You are a helpful pair-programmer assistant.\nContext:\n{context}"
+            system_content = f"""You are a helpful pair-programmer assistant with memory of our previous conversations.
+
+    RELEVANT CONTEXT FROM OUR HISTORY:
+    {context}
+
+    Remember to use the above context when answering. If the user refers to something we discussed before, use that information.
+    If you're unsure about something we previously discussed, you can mention what you remember from the context above."""
+
             msgs.append(SystemMessage(content=system_content))
             logger.logger.debug(f"Added system message with {len(context)} chars of context")
+        else:
+            # Even without context, set up the assistant's personality
+            msgs.append(SystemMessage(
+                content="You are a helpful pair-programmer assistant. Since we have no previous context, please let the user know if they reference something we haven't discussed yet."))
 
         msgs.append(HumanMessage(content=user_message))
 

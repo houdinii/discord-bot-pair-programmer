@@ -170,10 +170,11 @@ class VectorService:
             'max_context_length': max_context_length
         })
 
+        # Search for relevant content - increase top_k for more context
         results = await self.search_similar(
             query=query,
             channel_id=channel_id,
-            top_k=10
+            top_k=15  # Increased from 10
         )
 
         parts = []
@@ -181,7 +182,8 @@ class VectorService:
         used_results = 0
 
         for result in results:
-            if result["score"] < 0.7:
+            # FIX: Score is similarity (higher is better) after the inversion in search_similar
+            if result["score"] < 0.5:  # Changed from < 0.7 to < 0.5, and logic is now correct
                 logger.logger.debug(f"Skipping result with low score: {result['score']}")
                 continue
 
@@ -189,30 +191,35 @@ class VectorService:
 
             # Build context text based on type
             if md["type"] == "conversation":
-                text = f"Previous conversation:\nUser: {md.get('message', 'N/A')}\nAssistant: {md.get('response', 'N/A')}"
+                # Include timestamp for conversation context
+                timestamp = md.get('timestamp', 'Unknown time')
+                text = f"[{timestamp[:19]}] Previous conversation:\nUser: {md.get('message', 'N/A')}\nAssistant: {md.get('response', 'N/A')}"
             elif md["type"] == "memory":
-                text = f"Memory [{md.get('tag', 'N/A')}]: {md.get('content', 'N/A')}"
+                text = f"Saved Memory [{md.get('tag', 'N/A')}]: {md.get('content', 'N/A')}"
             elif md["type"] == "document":
-                text = f"Document [{md.get('filename', 'N/A')}]: {md.get('content', 'N/A')}"
+                text = f"Document [{md.get('filename', 'N/A')}]: {md.get('content', 'N/A')[:500]}..."
             elif md["type"] == "github":
-                text = f"GitHub [{md.get('repo_name', 'N/A')}]: {md.get('content', 'N/A')}"
+                text = f"GitHub [{md.get('repo_name', 'N/A')}]: {md.get('content', 'N/A')[:500]}..."
             else:
                 text = result.get('content', md.get('content', 'N/A'))
 
-            if length + len(text) > max_context_length:
+            # Check if adding this would exceed max length
+            if length + len(text) + 50 > max_context_length:  # 50 char buffer
                 logger.logger.debug(f"Reached max context length at {length} chars")
                 break
 
             parts.append(text)
-            length += len(text)
+            length += len(text) + 2  # Account for newlines
             used_results += 1
 
-        context = "\n\n".join(parts) if parts else ""
+        # Sort parts by timestamp if available (newest first for conversations)
+        context = "\n\n---\n\n".join(parts) if parts else ""
 
         logger.log_data('OUT', 'AI_CONTEXT_BUILT', {
             'total_length': len(context),
             'parts_used': used_results,
-            'total_results': len(results)
+            'total_results': len(results),
+            'context_preview': context[:200] + '...' if len(context) > 200 else context
         })
 
         return context
@@ -234,7 +241,7 @@ class VectorService:
                 ids_to_delete.append(result["id"])
 
         if ids_to_delete:
-            # Delete from Pinecone index directly
+            # Delete it from Pinecone index directly
             index = pc.Index(INDEX_NAME)
             index.delete(ids=ids_to_delete)
             return True

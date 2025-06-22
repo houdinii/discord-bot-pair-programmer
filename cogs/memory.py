@@ -148,7 +148,7 @@ class MemoryCog(commands.Cog):
         Usage: !forget project_auth
         """
 
-        # Delete from vector database
+        # Delete it from vector database
         success = await self.vector_service.delete_by_tag(
             channel_id=str(ctx.channel.id),
             tag=tag

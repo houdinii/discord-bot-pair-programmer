@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, UTC
 from functools import wraps
 from typing import Any
 
@@ -61,7 +61,7 @@ class DiscordBotLogger:
             return
 
         log_entry = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(UTC).isoformat(),
             'direction': direction,  # 'IN' or 'OUT'
             'type': data_type,
             'user_id': user_id,
@@ -80,7 +80,7 @@ class DebugFormatter(logging.Formatter):
 
     def format(self, record):
         # Base format
-        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        timestamp = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
         # Color based on level
         if record.levelno == logging.DEBUG:
@@ -125,7 +125,7 @@ class ProductionFormatter(logging.Formatter):
     """Simple formatter for production"""
 
     def format(self, record):
-        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         return f"[{timestamp}] {record.levelname:8} {record.name}: {record.getMessage()}"
 
 
@@ -134,7 +134,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record):
         log_obj = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(UTC).isoformat(),
             'level': record.levelname,
             'logger': record.name,
             'message': record.getMessage(),
@@ -147,6 +147,7 @@ class JsonFormatter(logging.Formatter):
             log_obj['data'] = record.data
 
         if record.exc_info:
+            # noinspection PyArgumentList
             log_obj['exception'] = traceback.format_exception(*record.exc_info)
 
         return json.dumps(log_obj)
