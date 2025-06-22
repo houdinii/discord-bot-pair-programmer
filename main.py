@@ -3,6 +3,7 @@ import os
 import os
 
 # Version 0.1.2.3
+print("Starting Pair Programmer Bot Version 0.1.2.3...")
 
 import discord
 from discord.ext import commands
