@@ -203,6 +203,130 @@ class VectorService:
 
         return vector_ids
 
+    @log_method()
+    async def store_github_file(self, repo_name: str, channel_id: str,
+                                file_path: str, content: str,
+                                file_type: str = None) -> List[str]:
+        """Store a GitHub file in the vector database"""
+        logger.log_data('IN', 'STORE_GITHUB_FILE', {
+            'repo_name': repo_name,
+            'file_path': file_path,
+            'file_type': file_type,
+            'content_length': len(content)
+        })
+
+        ts = datetime.now(timezone.utc).isoformat()
+        vector_ids = []
+
+        # Determine file type if not provided
+        if not file_type:
+            if file_path.endswith('.py'):
+                file_type = 'python'
+            elif file_path.endswith('.js') or file_path.endswith('.ts'):
+                file_type = 'javascript'
+            elif file_path.endswith('.md'):
+                file_type = 'markdown'
+            elif file_path.endswith('.yml') or file_path.endswith('.yaml'):
+                file_type = 'yaml'
+            elif file_path.endswith('.json'):
+                file_type = 'json'
+            else:
+                file_type = 'text'
+
+        # Chunk the file content if it's large
+        chunks = self._chunk_code(content, chunk_size=1200)
+
+        for i, chunk in enumerate(chunks):
+            chunk_id = _gen_id(chunk, repo_name, ts + f"_file_{i}")
+
+            # Create descriptive content
+            chunk_content = f"File: {file_path} from {repo_name}\n"
+            if len(chunks) > 1:
+                chunk_content += f"Part {i + 1}/{len(chunks)}\n"
+            chunk_content += f"Type: {file_type}\n"
+            chunk_content += f"```{file_type}\n{chunk}\n```"
+
+            doc = Document(
+                page_content=chunk_content,
+                metadata={
+                    "id": chunk_id,
+                    "repo_name": repo_name,
+                    "channel_id": channel_id,
+                    "file_path": file_path,
+                    "file_type": file_type,
+                    "timestamp": ts,
+                    "type": "github",
+                    "github_type": "code",
+                    "chunk_index": i,
+                    "total_chunks": len(chunks)
+                }
+            )
+
+            vector_ids.append(chunk_id)
+
+            # Use channel_id as namespace
+            vector_store = self._get_vector_store(namespace=channel_id)
+            vector_store.add_documents([doc], ids=[chunk_id])
+
+        logger.log_data('OUT', 'GITHUB_FILE_STORED', {
+            'file_path': file_path,
+            'chunks_stored': len(vector_ids)
+        })
+
+        return vector_ids
+
+    async def store_github_structure(self, repo_name: str, channel_id: str,
+                                     tree_structure: str) -> str:
+        """Store repository structure/tree"""
+        ts = datetime.now(timezone.utc).isoformat()
+        tree_id = _gen_id(tree_structure, repo_name, ts + "_tree")
+
+        doc = Document(
+            page_content=f"Repository structure for {repo_name}:\n{tree_structure}",
+            metadata={
+                "id": tree_id,
+                "repo_name": repo_name,
+                "channel_id": channel_id,
+                "timestamp": ts,
+                "type": "github",
+                "github_type": "structure"
+            }
+        )
+
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[tree_id])
+
+        return tree_id
+
+    def _chunk_code(self, code: str, chunk_size: int = 1200) -> List[str]:
+        """Chunk code while trying to preserve logical boundaries"""
+        if len(code) <= chunk_size:
+            return [code]
+
+        chunks = []
+        lines = code.split('\n')
+        current_chunk = []
+        current_size = 0
+
+        for line in lines:
+            line_size = len(line) + 1  # +1 for newline
+
+            # If adding this line would exceed chunk size
+            if current_size + line_size > chunk_size and current_chunk:
+                # Save current chunk
+                chunks.append('\n'.join(current_chunk))
+                current_chunk = [line]
+                current_size = line_size
+            else:
+                current_chunk.append(line)
+                current_size += line_size
+
+        # Remember the last chunk
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+
+        return chunks
+
     def _chunk_text(self, text: str, chunk_size: int = 1500) -> List[str]:
         """Split text into chunks"""
         chunks = []

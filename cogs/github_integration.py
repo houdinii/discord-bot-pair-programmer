@@ -7,6 +7,7 @@ from github import Github
 
 from config import GITHUB_TOKEN
 from database.models import GitHubRepo, get_db
+from services.github_service import GitHubService
 from services.vector_service import VectorService
 from utils.logger import get_logger
 
@@ -17,6 +18,7 @@ class GitHubCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.github = Github(GITHUB_TOKEN)
+        self.github_service = GitHubService(GITHUB_TOKEN)
         self.vector_service = VectorService()
 
     @commands.command(name='address')
@@ -33,9 +35,11 @@ class GitHubCog(commands.Cog):
             repo_name = repo_url
 
         try:
-            # Show typing indicator for longer operation
+            # Send initial message
+            status_msg = await ctx.send(f"🔄 Indexing repository: **{repo_name}**\nThis may take a moment...")
+
             async with ctx.typing():
-                # Verify repository exists and we have access
+                # Verify repository exists
                 repo = self.github.get_repo(repo_name)
 
                 # Save to database
@@ -49,10 +53,11 @@ class GitHubCog(commands.Cog):
                     ).first()
 
                     if existing:
-                        await ctx.send(f"❌ Repository {repo_name} is already tracked in this channel")
+                        await status_msg.edit(content=f"❌ Repository {repo_name} is already tracked in this channel")
                         db.close()
                         return
 
+                    # Add to database
                     github_repo = GitHubRepo(
                         repo_name=repo_name,
                         repo_url=repo.html_url,
@@ -65,7 +70,10 @@ class GitHubCog(commands.Cog):
                     db.add(github_repo)
                     db.commit()
 
-                    # Ingest repository into vector database
+                    # Update status
+                    await status_msg.edit(content=f"✅ Repository added to database\n🔄 Indexing repository contents...")
+
+                    # Index repository overview
                     readme_content = None
                     try:
                         readme = repo.get_readme()
@@ -73,11 +81,10 @@ class GitHubCog(commands.Cog):
                     except:
                         logger.logger.info(f"No README found for {repo_name}")
 
-                    # Get topics/tags
                     topics = repo.get_topics() if hasattr(repo, 'get_topics') else []
 
-                    # Store in vector database
-                    vector_ids = await self.vector_service.store_github_repo(
+                    # Store overview and README
+                    overview_ids = await self.vector_service.store_github_repo(
                         repo_name=repo_name,
                         channel_id=str(ctx.channel.id),
                         readme_content=readme_content,
@@ -86,18 +93,71 @@ class GitHubCog(commands.Cog):
                         topics=topics
                     )
 
+                    # Get and index repository files
+                    await status_msg.edit(content=f"✅ Repository overview indexed\n🔄 Indexing code files...")
+
+                    files, tree_structure = await self.github_service.get_repository_files(
+                        repo_name=repo_name,
+                        max_files=50  # Adjust based on your needs
+                    )
+
+                    # Store tree structure
+                    tree_id = await self.vector_service.store_github_structure(
+                        repo_name=repo_name,
+                        channel_id=str(ctx.channel.id),
+                        tree_structure=tree_structure
+                    )
+
+                    # Index each file
+                    file_vector_ids = []
+                    for i, file_info in enumerate(files):
+                        if i % 10 == 0:  # Update status every 10 files
+                            await status_msg.edit(
+                                content=f"✅ Repository overview indexed\n🔄 Indexing files... ({i}/{len(files)})"
+                            )
+
+                        ids = await self.vector_service.store_github_file(
+                            repo_name=repo_name,
+                            channel_id=str(ctx.channel.id),
+                            file_path=file_info['path'],
+                            content=file_info['content']
+                        )
+                        file_vector_ids.extend(ids)
+
+                    # Delete status message
+                    await status_msg.delete()
+
+                    # Send success embed
                     embed = discord.Embed(
-                        title="Repository Added",
-                        description=f"Now tracking: **{repo_name}**",
+                        title="Repository Fully Indexed! 🎉",
+                        description=f"**{repo_name}** is now tracked and indexed",
                         color=0x00ff00
                     )
                     embed.add_field(name="Description", value=repo.description or "No description", inline=False)
-                    embed.add_field(name="Language", value=repo.language or "Unknown", inline=True)
-                    embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
-                    embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
-                    embed.add_field(name="Vector Storage", value=f"✅ Indexed {len(vector_ids)} chunks", inline=False)
+                    embed.add_field(name="Primary Language", value=repo.language or "Unknown", inline=True)
+                    embed.add_field(name="Stars", value=f"⭐ {repo.stargazers_count}", inline=True)
+                    embed.add_field(name="Open Issues", value=f"🐛 {repo.open_issues_count}", inline=True)
+
+                    # Get language breakdown
+                    languages = await self.github_service.get_repo_languages(repo_name)
+                    if languages:
+                        lang_str = ", ".join([f"{lang}: {pct:.1f}%"
+                                              for lang, lang_bytes in languages.items()
+                                              for pct in [lang_bytes / sum(languages.values()) * 100]][:5])
+                        embed.add_field(name="Languages", value=lang_str, inline=False)
+
+                    # Indexing stats
+                    total_chunks = len(overview_ids) + len(file_vector_ids) + 1  # +1 for tree
+                    embed.add_field(
+                        name="📊 Indexing Complete",
+                        value=f"• Files indexed: {len(files)}\n"
+                              f"• Total chunks: {total_chunks}\n"
+                              f"• Repository structure mapped",
+                        inline=False
+                    )
 
                     await ctx.send(embed=embed)
+
                 finally:
                     db.close()
 
@@ -550,6 +610,83 @@ class GitHubCog(commands.Cog):
         embed.add_field(name="Vectors in Namespace", value="Use !stats for details", inline=False)
 
         await ctx.send(embed=embed)
+
+    @commands.command(name='codesearch')
+    async def search_code(self, ctx, repo_name: str, *, query: str):
+        """
+        Search for code in a tracked repository
+        Usage: !codesearch user/repo function_name
+        """
+        # Verify repo is tracked
+        db = get_db()
+        try:
+            tracked_repo = db.query(GitHubRepo).filter(
+                GitHubRepo.repo_name == repo_name,
+                GitHubRepo.channel_id == str(ctx.channel.id),
+                GitHubRepo.is_active == True
+            ).first()
+
+            if not tracked_repo:
+                await ctx.send(f"❌ Repository {repo_name} is not tracked in this channel")
+                return
+
+            # Search for code
+            results = await self.vector_service.search_similar(
+                query=query,
+                channel_id=str(ctx.channel.id),
+                content_type=['github'],
+                top_k=5
+            )
+
+            # Filter for code results from this repo
+            code_results = [r for r in results
+                            if r['metadata'].get('repo_name') == repo_name
+                            and r['metadata'].get('github_type') in ['code', 'structure']]
+
+            if not code_results:
+                await ctx.send(f"❌ No code found matching: {query}")
+                return
+
+            embed = discord.Embed(
+                title=f"Code Search: {query}",
+                description=f"Repository: {repo_name}",
+                color=0x0099ff
+            )
+
+            for result in code_results[:3]:  # Limit to 3 results
+                metadata = result['metadata']
+                score = result['score']
+
+                if metadata.get('github_type') == 'code':
+                    file_path = metadata.get('file_path', 'Unknown')
+                    # Extract relevant code snippet
+                    content = result['content']
+                    # Find the code block
+                    if '```' in content:
+                        code_start = content.find('```')
+                        code_end = content.find('```', code_start + 3)
+                        if code_end > code_start:
+                            code_snippet = content[code_start:code_end + 3]
+                        else:
+                            code_snippet = content[:300] + "..."
+                    else:
+                        code_snippet = content[:300] + "..."
+
+                    embed.add_field(
+                        name=f"📄 {file_path} (Score: {score:.2f})",
+                        value=f"```{metadata.get('file_type', 'text')}\n{code_snippet[:400]}...```",
+                        inline=False
+                    )
+                elif metadata.get('github_type') == 'structure':
+                    embed.add_field(
+                        name=f"📁 Repository Structure (Score: {score:.2f})",
+                        value=f"```\n{result['content'][:300]}...```",
+                        inline=False
+                    )
+
+            await ctx.send(embed=embed)
+        finally:
+            db.close()
 
 
 async def setup(bot):
