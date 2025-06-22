@@ -184,10 +184,12 @@ class FileManagerCog(commands.Cog):
         # Chunk the content
         chunks = self._chunk_text(content, chunk_size=1500)
 
+        logger.logger.info(f"Indexing {len(chunks)} chunks for file {filename} (ID: {file_id})")
+
         for i, chunk in enumerate(chunks):
             # Create metadata for this chunk
             chunk_metadata = {
-                "file_id": file_id,
+                "file_id": str(file_id),  # Ensure it's a string
                 "filename": filename,
                 "chunk_index": i,
                 "total_chunks": len(chunks),
@@ -204,6 +206,8 @@ class FileManagerCog(commands.Cog):
                 metadata=chunk_metadata
             )
             vector_ids.append(vector_id)
+
+            logger.logger.debug(f"Stored chunk {i + 1}/{len(chunks)} with ID: {vector_id}")
 
         return vector_ids
 
@@ -555,6 +559,69 @@ class FileManagerCog(commands.Cog):
             # Clean up temp file
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
+
+    @commands.command(name='debugfile')
+    async def debug_file(self, ctx, file_id: int):
+        """
+        Debug command to check file indexing status
+        Usage: !debugfile 123
+        """
+        db = get_db()
+        file_metadata = db.query(FileMetadata).filter(
+            FileMetadata.id == file_id
+        ).first()
+        db.close()
+
+        if not file_metadata:
+            await ctx.send("❌ File not found in database")
+            return
+
+        # Search for chunks of this file
+        results = await self.vector_service.search_documents(
+            query=file_metadata.filename,
+            channel_id=str(ctx.channel.id),
+            file_id=str(file_id),
+            top_k=50
+        )
+
+        # Also try a general search
+        general_results = await self.vector_service.search_similar(
+            query=file_metadata.filename,
+            channel_id=str(ctx.channel.id),
+            content_type=['document'],
+            top_k=10
+        )
+
+        embed = discord.Embed(
+            title=f"Debug Info: {file_metadata.filename}",
+            color=0xffff00
+        )
+
+        embed.add_field(name="File ID", value=str(file_id), inline=True)
+        embed.add_field(name="Channel ID", value=str(ctx.channel.id), inline=True)
+        embed.add_field(name="Chunks Found", value=str(len(results)), inline=True)
+
+        # Check chunk details
+        if results:
+            chunk_indices = sorted(set(r['metadata'].get('chunk_index', -1) for r in results))
+            total_chunks = results[0]['metadata'].get('total_chunks', 'Unknown')
+            embed.add_field(
+                name="Chunk Details",
+                value=f"Indices: {chunk_indices}\nTotal Expected: {total_chunks}",
+                inline=False
+            )
+
+            # Show sample content
+            sample = results[0]['content'][:200] + "..."
+            embed.add_field(name="Sample Content", value=f"```{sample}```", inline=False)
+
+        embed.add_field(
+            name="General Search Results",
+            value=f"{len(general_results)} results found",
+            inline=False
+        )
+
+        await ctx.send(embed=embed)
 
 
 async def setup(bot):

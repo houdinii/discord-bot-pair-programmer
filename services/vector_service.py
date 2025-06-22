@@ -34,7 +34,7 @@ if not pc.has_index(INDEX_NAME):
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 
-def _gen_id(text: str, user: str, ts: str) -> str:
+def gen_id(text: str, user: str, ts: str) -> str:
     """Generate a stable unique ID for each record."""
     # noinspection PyTypeChecker
     return hashlib.md5(f"{user}_{ts}_{text[:50]}".encode()).hexdigest()
@@ -70,7 +70,7 @@ class VectorService:
 
         ts = datetime.now(timezone.utc).isoformat()
         combined = f"User: {message}\nAssistant: {response}"
-        vid = _gen_id(combined, user_id, ts)
+        vid = gen_id(combined, user_id, ts)
 
         doc = Document(
             page_content=combined,
@@ -96,31 +96,6 @@ class VectorService:
             'namespace': channel_id
         })
 
-        return vid
-
-    async def store_document_chunk(self, filename: str, content: str,
-                                   user_id: str, channel_id: str,
-                                   metadata: Dict) -> str:
-        """Store a document chunk with additional metadata"""
-        ts = datetime.now(timezone.utc).isoformat()
-        text_content = f"Document [{filename}]: {content[:200]}..."
-        vid = _gen_id(text_content, user_id, ts)
-
-        doc = Document(
-            page_content=content,
-            metadata={
-                "id": vid,
-                "user_id": user_id,
-                "channel_id": channel_id,
-                "filename": filename,
-                "timestamp": ts,
-                "type": "document",
-                **metadata  # Include additional metadata
-            }
-        )
-
-        vector_store = self._get_vector_store(namespace=channel_id)
-        vector_store.add_documents([doc], ids=[vid])
         return vid
 
     async def delete_document_chunks(self, file_id: str, channel_id: str) -> bool:
@@ -182,7 +157,7 @@ class VectorService:
         """Store a memory with a tag"""
         ts = datetime.now(timezone.utc).isoformat()
         text_content = f"Memory [{tag}]: {content}"
-        vid = _gen_id(text_content, user_id, ts)
+        vid = gen_id(text_content, user_id, ts)
 
         doc = Document(
             page_content=text_content,
@@ -228,7 +203,7 @@ class VectorService:
         if topics:
             overview += f"\nTopics: {', '.join(topics)}"
 
-        overview_id = _gen_id(overview, repo_name, ts + "_overview")
+        overview_id = gen_id(overview, repo_name, ts + "_overview")
 
         doc_overview = Document(
             page_content=overview,
@@ -253,7 +228,7 @@ class VectorService:
             chunks = self._chunk_text(readme_content, chunk_size=1500)
 
             for i, chunk in enumerate(chunks):
-                chunk_id = _gen_id(chunk, repo_name, ts + f"_readme_{i}")
+                chunk_id = gen_id(chunk, repo_name, ts + f"_readme_{i}")
                 doc_readme = Document(
                     page_content=f"README for {repo_name} (part {i + 1}/{len(chunks)}):\n{chunk}",
                     metadata={
@@ -317,7 +292,7 @@ class VectorService:
         chunks = self._chunk_code(content, chunk_size=1200)
 
         for i, chunk in enumerate(chunks):
-            chunk_id = _gen_id(chunk, repo_name, ts + f"_file_{i}")
+            chunk_id = gen_id(chunk, repo_name, ts + f"_file_{i}")
 
             # Create descriptive content
             chunk_content = f"File: {file_path} from {repo_name}\n"
@@ -359,7 +334,7 @@ class VectorService:
                                      tree_structure: str) -> str:
         """Store repository structure/tree"""
         ts = datetime.now(timezone.utc).isoformat()
-        tree_id = _gen_id(tree_structure, repo_name, ts + "_tree")
+        tree_id = gen_id(tree_structure, repo_name, ts + "_tree")
 
         doc = Document(
             page_content=f"Repository structure for {repo_name}:\n{tree_structure}",
@@ -484,7 +459,7 @@ class VectorService:
     async def get_context_for_ai(self, query: str,
                                  channel_id: str,
                                  max_context_length: int = 3000) -> str:
-        """Get relevant context for AI response"""
+        """Get relevant context for AI response including documents"""
         logger.log_data('IN', 'GET_AI_CONTEXT', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
@@ -492,63 +467,111 @@ class VectorService:
             'max_context_length': max_context_length
         })
 
-        # Search for relevant content - increase top_k for more context
+        # Search for relevant content - use a higher top_k for documents
         results = await self.search_similar(
             query=query,
             channel_id=channel_id,
-            top_k=15  # Increased from 10
+            top_k=25  # Increased to ensure we get documents
         )
+
+        # Also do a specific document search
+        doc_results = await self.search_documents(
+            query=query,
+            channel_id=channel_id,
+            top_k=10
+        )
+
+        # Combine and deduplicate results
+        all_results = results + doc_results
+        seen_ids = set()
+        unique_results = []
+
+        for result in all_results:
+            result_id = result.get('id') or result['metadata'].get('id')
+            if result_id not in seen_ids:
+                seen_ids.add(result_id)
+                unique_results.append(result)
+
+        # Sort by score
+        unique_results.sort(key=lambda x: x.get('score', 0), reverse=True)
 
         parts = []
         length = 0
         used_results = 0
+        used_files = {}  # Track which files we've included
 
-        for result in results:
-            # Score is similarity (higher is better) after the inversion in search_similar
-            if result["score"] < 0.5:  # Minimum relevance threshold
-                logger.logger.debug(f"Skipping result with low score: {result['score']}")
+        for result in unique_results:
+            # Score threshold
+            if result.get("score", 1) < 0.5:
                 continue
 
             md = result["metadata"]
+            content = result.get('content', '')
 
             # Build context text based on type
             if md["type"] == "conversation":
-                # Include timestamp for conversation context
                 timestamp = md.get('timestamp', 'Unknown time')
-                text = f"[{timestamp[:19]}] Previous conversation:\nUser: {md.get('message', 'N/A')}\nAssistant: {md.get('response', 'N/A')}"
+                text = f"[Previous conversation - {timestamp[:19]}]\n"
+                text += f"User: {md.get('message', 'N/A')}\n"
+                text += f"Assistant: {md.get('response', 'N/A')}"
+
             elif md["type"] == "memory":
-                text = f"Saved Memory [{md.get('tag', 'N/A')}]: {md.get('content', 'N/A')}"
+                text = f"[Saved Memory - {md.get('tag', 'N/A')}]\n{md.get('content', 'N/A')}"
+
             elif md["type"] == "document":
-                text = f"Document [{md.get('filename', 'N/A')}]: {md.get('content', 'N/A')[:500]}..."
+                file_id = md.get('file_id')
+                filename = md.get('filename', 'Unknown')
+
+                # Track how many chunks per file we've included
+                if file_id:
+                    if file_id not in used_files:
+                        used_files[file_id] = 0
+
+                    # Limit chunks per file to avoid one document dominating
+                    if used_files[file_id] >= 3:
+                        continue
+
+                    used_files[file_id] += 1
+
+                chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
+
+                # Extract actual content (remove search enhancement prefix)
+                if "Content:\n" in content:
+                    actual_content = content.split("Content:\n", 1)[1]
+                else:
+                    actual_content = content
+
+                text = f"[Document: {filename} - {chunk_info}]\n{actual_content[:600]}..."
+
             elif md["type"] == "github":
                 github_type = md.get('github_type', 'content')
                 repo_name = md.get('repo_name', 'Unknown')
-                if github_type == 'overview':
-                    text = f"GitHub Repository Info:\n{result.get('content', 'N/A')}"
-                elif github_type == 'readme':
-                    chunk_info = f"(part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)})"
-                    text = f"GitHub README {chunk_info}:\n{result.get('content', 'N/A')[:800]}..."
-                else:
-                    text = f"GitHub [{repo_name}]: {result.get('content', 'N/A')[:500]}..."
-            else:
-                text = result.get('content', md.get('content', 'N/A'))
 
-            # Check if adding this would exceed max length
-            if length + len(text) + 50 > max_context_length:  # 50 char buffer
-                logger.logger.debug(f"Reached max context length at {length} chars")
+                if github_type == 'code':
+                    file_path = md.get('file_path', 'Unknown')
+                    text = f"[GitHub Code - {repo_name}/{file_path}]\n{content[:500]}..."
+                else:
+                    text = f"[GitHub {github_type} - {repo_name}]\n{content[:500]}..."
+
+            else:
+                continue  # Skip unknown types
+
+            # Check length limit
+            if length + len(text) + 50 > max_context_length:
                 break
 
             parts.append(text)
-            length += len(text) + 2  # Account for newlines
+            length += len(text) + 4  # Account for separators
             used_results += 1
 
-        # Sort parts by timestamp if available (newest first for conversations)
         context = "\n\n---\n\n".join(parts) if parts else ""
 
         logger.log_data('OUT', 'AI_CONTEXT_BUILT', {
             'total_length': len(context),
             'parts_used': used_results,
-            'total_results': len(results),
+            'total_results': len(unique_results),
+            'unique_documents': len(used_files),
+            'document_chunks_used': sum(used_files.values()),
             'context_preview': context[:200] + '...' if len(context) > 200 else context,
             'namespace': channel_id
         })
@@ -646,36 +669,99 @@ class VectorService:
             "index_fullness": stats.get('index_fullness', 0.0)
         }
 
-    async def store_document(self, filename: str, content: str,
-                             user_id: str, channel_id: str,
-                             file_type: str = None) -> str:
-        """Store document content in vector database"""
+    async def store_document_chunk(self, filename: str, content: str,
+                                   user_id: str, channel_id: str,
+                                   metadata: Dict) -> str:
+        """Store a document chunk with additional metadata"""
         ts = datetime.now(timezone.utc).isoformat()
-        text_content = f"Document [{filename}]: {content[:1000]}"  # Limit preview
-        vid = _gen_id(text_content, user_id, ts)
+
+        # Create a unique ID that includes file_id for better tracking
+        file_id = metadata.get('file_id', 'unknown')
+        chunk_index = metadata.get('chunk_index', 0)
+        vid = gen_id(f"{file_id}_{chunk_index}_{content[:50]}", user_id, ts)
+
+        # Create comprehensive content for better search
+        # Include filename and description in the searchable content
+        enhanced_content = f"Document: {filename}\n"
+        if metadata.get('description'):
+            enhanced_content += f"Description: {metadata['description']}\n"
+        enhanced_content += f"Content:\n{content}"
 
         doc = Document(
-            page_content=content,
+            page_content=enhanced_content,  # Use enhanced content for better search
             metadata={
                 "id": vid,
                 "user_id": user_id,
                 "channel_id": channel_id,
                 "filename": filename,
-                "file_type": file_type,
                 "timestamp": ts,
-                "type": "document"
+                "type": "document",
+                **metadata  # Include all additional metadata
             }
         )
+
         vector_store = self._get_vector_store(namespace=channel_id)
         vector_store.add_documents([doc], ids=[vid])
+
+        logger.log_data('OUT', 'DOCUMENT_CHUNK_STORED', {
+            'vector_id': vid,
+            'file_id': file_id,
+            'chunk_index': chunk_index,
+            'namespace': channel_id
+        })
+
         return vid
+
+    async def search_documents(self, query: str, channel_id: str,
+                               file_id: Optional[str] = None, top_k: int = 10) -> List[Dict]:
+        """Search specifically for document content"""
+        logger.log_data('IN', 'SEARCH_DOCUMENTS', {
+            'query': query,
+            'channel_id': channel_id,
+            'file_id': file_id,
+            'top_k': top_k
+        })
+
+        # Build filter
+        filter_dict = {"type": "document"}
+        if file_id:
+            filter_dict["file_id"] = str(file_id)
+
+        # Use namespace for channel isolation
+        vector_store = self._get_vector_store(namespace=channel_id)
+
+        # Search with the query
+        results = vector_store.similarity_search_with_score(
+            query,
+            k=top_k,
+            filter=filter_dict
+        )
+
+        formatted_results = [
+            {
+                "id": doc.metadata.get("id"),
+                "score": 1 - score,  # Convert distance to similarity
+                "metadata": doc.metadata,
+                "content": doc.page_content,
+                "file_id": doc.metadata.get("file_id"),
+                "chunk_index": doc.metadata.get("chunk_index", 0)
+            }
+            for doc, score in results
+        ]
+
+        logger.log_data('OUT', 'DOCUMENT_SEARCH_RESULTS', {
+            'results_count': len(formatted_results),
+            'file_ids': list(set(r['file_id'] for r in formatted_results if r['file_id']))
+        })
+
+        return formatted_results
 
     async def store_github_content(self, repo_name: str, content: str,
                                    content_type: str, channel_id: str) -> str:
         """Store GitHub-related content"""
         ts = datetime.now(timezone.utc).isoformat()
         text_content = f"GitHub [{repo_name}] {content_type}: {content[:500]}"
-        vid = _gen_id(text_content, repo_name, ts)
+        vid = gen_id(text_content, repo_name, ts)
 
         doc = Document(
             page_content=content,
