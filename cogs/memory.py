@@ -39,7 +39,7 @@ class MemoryCog(commands.Cog):
         Recall memories by searching for similar content
         Usage: !recall authentication
         Usage: !recall React PostgreSQL
-        Note: This searches the CONTENT of memories, not the tags. Use !list_memories to see all tags.
+        Note: This searches the CONTENT of memories, not the tags.
         """
 
         # Search for memories by content
@@ -52,7 +52,7 @@ class MemoryCog(commands.Cog):
 
         if not results:
             await ctx.send(
-                f"❌ No memories found with content related to: {query}\n💡 Tip: !recall searches memory content, not tags. Use !list_memories to see all memory tags.")
+                f"❌ No memories found with content related to: {query}\n💡 Tip: Try !list_memories to see all saved memories.")
             return
 
         embed = discord.Embed(
@@ -105,12 +105,19 @@ class MemoryCog(commands.Cog):
         Usage: !list_memories
         """
 
-        memories = await self.vector_service.list_memory_tags(
+        # Try the alternative method that uses multiple queries
+        memories = await self.vector_service.get_all_memories(
             channel_id=str(ctx.channel.id)
         )
 
         if not memories:
-            await ctx.send("❌ No memories saved in this channel")
+            # If still no results, check if there are ANY vectors
+            stats = await self.vector_service.get_stats()
+            if stats['total_vectors'] == 0:
+                await ctx.send("❌ No memories saved yet. Use !remember [tag] [content] to save memories.")
+            else:
+                await ctx.send(
+                    f"❌ No memories found in this channel (Total vectors in database: {stats['total_vectors']})")
             return
 
         embed = discord.Embed(
@@ -162,12 +169,43 @@ class MemoryCog(commands.Cog):
             color=0x0099ff
         )
 
-        if 'error' in stats:
-            embed.add_field(name="Error", value=stats['error'], inline=False)
-        else:
-            embed.add_field(name="Total Vectors", value=stats['total_vectors'], inline=True)
-            embed.add_field(name="Dimension", value=stats['dimension'], inline=True)
-            embed.add_field(name="Index Fullness", value=f"{stats['index_fullness']:.2%}", inline=True)
+        embed.add_field(name="Total Vectors", value=stats['total_vectors'], inline=True)
+        embed.add_field(name="Dimension", value=stats['dimension'], inline=True)
+        embed.add_field(name="Index Fullness", value=f"{stats['index_fullness']:.2%}", inline=True)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='debug_memories')
+    async def debug_memories(self, ctx):
+        """Debug command to check memory storage"""
+        # First check stats
+        stats = await self.vector_service.get_stats()
+
+        # Try to search for recent memories
+        results = await self.vector_service.search_similar(
+            query="project React Node PostgreSQL JWT API",  # Keywords from your test memories
+            channel_id=str(ctx.channel.id),
+            content_type=['memory'],
+            top_k=10
+        )
+
+        embed = discord.Embed(
+            title="Memory Debug Info",
+            color=0xffff00
+        )
+
+        embed.add_field(name="Total Vectors", value=stats['total_vectors'], inline=True)
+        embed.add_field(name="Channel ID", value=str(ctx.channel.id), inline=True)
+        embed.add_field(name="Search Results", value=f"{len(results)} found", inline=True)
+
+        if results:
+            for i, result in enumerate(results[:3]):
+                metadata = result['metadata']
+                embed.add_field(
+                    name=f"Result {i + 1}: {metadata.get('tag', 'N/A')}",
+                    value=f"Type: {metadata.get('type', 'N/A')}\nScore: {result['score']:.2f}",
+                    inline=False
+                )
 
         await ctx.send(embed=embed)
 

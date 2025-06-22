@@ -22,7 +22,7 @@ if INDEX_NAME not in pc.list_indexes().names():
         region="us-east-1",  # your chosen region
         embed={  # integrated-embedding config
             "model": "llama-text-embed-v2",
-            "field_map": {"text": "text"}  # FIXED: Use "text" field directly
+            "field_map": {"text": "text"}
         }
     )
     # wait for index to be ready
@@ -48,7 +48,7 @@ class VectorService:
 
         index.upsert_records(records=[{
             "_id": vid,
-            "text": combined,  # CHANGED: from "chunk_text" to "text"
+            "text": combined,
             "user_id": user_id,
             "channel_id": channel_id,
             "ai_model": ai_model,
@@ -56,7 +56,7 @@ class VectorService:
             "type": "conversation",
             "message": message,
             "response": response
-        }], namespace='default')
+        }], namespace="default")
         return vid
 
     async def store_memory(self, user_id: str, channel_id: str,
@@ -67,14 +67,14 @@ class VectorService:
 
         index.upsert_records(records=[{
             "_id": vid,
-            "text": text_content,  # CHANGED: from "chunk_text" to "text"
+            "text": text_content,
             "user_id": user_id,
             "channel_id": channel_id,
             "tag": tag,
             "timestamp": ts,
             "type": "memory",
-            "content": content  # Store original content for retrieval
-        }], namespace='default')
+            "content": content
+        }], namespace="default")
         return vid
 
     async def search_similar(self, query: str,
@@ -138,9 +138,12 @@ class VectorService:
         return "\n\n".join(parts) if parts else ""
 
     async def delete_by_tag(self, channel_id: str, tag: str) -> bool:
-        # Find all memory entries matching tag
+        # We need to search for memories with this tag
+        # Since we can't do empty query, we'll search with the tag itself
         res = index.query(
-            query="", top_k=1000, include_metadata=True,
+            query=tag,  # Search with the tag name
+            top_k=100,
+            include_metadata=True,
             filter={
                 "channel_id": {"$eq": channel_id},
                 "tag": {"$eq": tag},
@@ -153,19 +156,12 @@ class VectorService:
             return True
         return False
 
-    async def get_stats(self) -> dict:
-        stats = index.describe_index_stats()
-        return {
-            "total_vectors": stats.get("total_vector_count", 0),
-            "dimension": stats.get("dimension", 0),
-            "index_fullness": stats.get("index_fullness", 0)
-        }
-
     async def get_memory_by_tag(self, channel_id: str, tag: str) -> dict:
         """Get a specific memory by its exact tag"""
+        # Search using the tag as query since we can't do empty queries
         res = index.query(
-            query="",  # Empty query for filter-only search
-            top_k=1,
+            query=tag,  # Use tag as query
+            top_k=10,
             include_metadata=True,
             filter={
                 "channel_id": {"$eq": channel_id},
@@ -181,12 +177,15 @@ class VectorService:
                 "content": m.metadata.get("content"),
                 "timestamp": m.metadata.get("timestamp")
             }
+        # noinspection PyTypeChecker
         return None
 
     async def list_memory_tags(self, channel_id: str) -> list[dict]:
         """List all memory tags in a channel"""
+        # Since we can't do empty queries with integrated embeddings,
+        # we'll search with a generic term and rely on filters
         res = index.query(
-            query="",  # Empty query to get all
+            query="memory",  # Generic search term
             top_k=100,
             include_metadata=True,
             filter={
@@ -209,3 +208,44 @@ class VectorService:
                 })
 
         return sorted(memories, key=lambda x: x["tag"])
+
+    async def get_all_memories(self, channel_id: str) -> list[dict]:
+        """Alternative method to get all memories using multiple queries"""
+        # Try multiple generic queries to catch different memories
+        all_memories = {}
+
+        # Try different search terms to catch various memories
+        search_terms = ["memory", "project", "api", "auth", "config", "setup", "note", "important"]
+
+        for term in search_terms:
+            try:
+                res = index.query(
+                    query=term,
+                    top_k=50,
+                    include_metadata=True,
+                    filter={
+                        "channel_id": {"$eq": channel_id},
+                        "type": {"$eq": "memory"}
+                    }
+                )
+
+                for m in res.matches:
+                    tag = m.metadata.get("tag")
+                    if tag and tag not in all_memories:
+                        all_memories[tag] = {
+                            "tag": tag,
+                            "content": m.metadata.get("content", ""),
+                            "timestamp": m.metadata.get("timestamp", "")
+                        }
+            except:
+                continue
+
+        return sorted(all_memories.values(), key=lambda x: x["tag"])
+
+    async def get_stats(self) -> dict:
+        stats = index.describe_index_stats()
+        return {
+            "total_vectors": stats.get("total_vector_count", 0),
+            "dimension": stats.get("dimension", 0),
+            "index_fullness": stats.get("index_fullness", 0)
+        }
