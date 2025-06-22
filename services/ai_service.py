@@ -52,5 +52,5 @@ class AIService:
         try:
             enc = encoding_for_model(model)
             return len(enc.encode(text))
-        except:
+        except Exception:
             return len(text.split()) * 1  # rough fallback

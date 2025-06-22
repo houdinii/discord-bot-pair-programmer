@@ -2,11 +2,7 @@ import os
 
 import os
 
-# Drop any proxy settings so OpenAI won't inject them
-os.environ.pop("HTTP_PROXY",  None)
-os.environ.pop("HTTPS_PROXY", None)
-os.environ.pop("http_proxy",  None)
-os.environ.pop("https_proxy", None)
+# Version 0.1.2.3
 
 import discord
 from discord.ext import commands

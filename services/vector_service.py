@@ -55,8 +55,8 @@ class VectorService:
             "type": "conversation",
             # Add these fields for search display
             "message": message,
-            "response": response
-        }])
+            "response": response,
+        }], namespace="")
         return vid
 
     async def store_memory(self, user_id: str, channel_id: str,
@@ -73,7 +73,7 @@ class VectorService:
             "tag": tag,
             "timestamp": ts,
             "type": "memory"
-        }])
+        }], namespace="")
         return vid
 
     async def search_similar(self, query: str,
