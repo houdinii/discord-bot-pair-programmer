@@ -1,9 +1,9 @@
+import os
+import uuid
+from typing import Optional
+
 import boto3
 from botocore.exceptions import NoCredentialsError
-import os
-import aiofiles
-from typing import Optional
-import uuid
 
 
 class S3Service:

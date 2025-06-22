@@ -38,7 +38,6 @@ class AIChatCog(commands.Cog):
                 # Get AI response with context - FIXED PARAMETERS
                 response = await self.ai_service.get_ai_response(
                     provider=provider,
-                    model=model,
                     user_message=message,
                     context=context
                 )

@@ -10,8 +10,8 @@ from cogs.memory import MemoryCog
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# Version 0.1.2.5
-print("Starting Pair Programmer Bot Version 0.1.2.5...")
+# Version 0.1.3
+print("Starting Pair Programmer Bot Version 0.1.3...")
 
 load_dotenv()
 

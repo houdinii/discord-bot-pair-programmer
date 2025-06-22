@@ -1,30 +1,31 @@
 # services/ai_service.py
 
 import os
-from typing import List, Dict
 
-from langchain.chat_models import ChatOpenAI, ChatAnthropic
 from langchain.schema import SystemMessage, HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 
 
 class AIService:
     def __init__(self):
         # LangChain handles all HTTP under the hood—no proxies errors
         self.openai_llm = ChatOpenAI(
-            model_name="gpt-4",
+            model="gpt-4",
             temperature=0.7,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            api_key=os.getenv("OPENAI_API_KEY")
         )
+        # noinspection PyArgumentList
         self.anthropic_llm = ChatAnthropic(
-            model="claude-3-sonnet",
+            model_name="claude-3-sonnet",
             temperature=0.7,
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+            timeout=300,
+            api_key=os.getenv("ANTHROPIC_API_KEY")
         )
 
     async def get_ai_response(
         self,
         provider: str,
-        model: str,
         user_message: str,
         context: str = None
     ) -> str:
