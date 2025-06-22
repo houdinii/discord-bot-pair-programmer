@@ -279,6 +279,39 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error getting repository info: {str(e)}")
             logger.logger.error(f"Error in repository_info: {str(e)}", exc_info=True)
 
+    @commands.command(name='repos')
+    async def list_repositories(self, ctx):
+        """List all tracked repositories in this channel"""
+        db = get_db()
+        try:
+            # FIX: is_active comparison was wrong
+            repos = db.query(GitHubRepo).filter(
+                GitHubRepo.channel_id == str(ctx.channel.id),
+                GitHubRepo.is_active == True  # Use == instead of 'is'
+            ).all()
+
+            if not repos:
+                await ctx.send("❌ No repositories are being tracked in this channel")
+                return
+
+            embed = discord.Embed(
+                title="Tracked Repositories",
+                color=0x0099ff
+            )
+
+            for repo in repos:
+                embed.add_field(
+                    name=repo.repo_name,
+                    value=f"[View on GitHub]({repo.repo_url})\nAdded: {repo.added_timestamp.strftime('%Y-%m-%d')}",
+                    inline=True
+                )
+
+            await ctx.send(embed=embed)
+        except Exception as e:
+            await ctx.send(f"❌ Error listing repositories: {str(e)}")
+        finally:
+            db.close()
+
     @commands.command(name='issues')
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
         """
