@@ -12,3 +12,4 @@ alembic
 PyPDF2
 python-magic
 tiktoken
+pymysql
