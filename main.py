@@ -1,7 +1,10 @@
-import os
+# main.py
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
+from config import DISCORD_TOKEN, DEBUG
+from database.models import init_db
 from utils.logger import get_logger
 from database.models import init_db  # Add this import
 
@@ -12,8 +15,12 @@ load_dotenv()
 logger = get_logger(__name__)
 
 # Log startup
-debug_mode = os.getenv('DEBUG', 'false').lower() == 'true'
-logger.logger.info(f"Starting Discord Bot (Debug Mode: {debug_mode})")
+logger.logger.info(f"Starting Discord Bot (Debug Mode: {DEBUG})")
+
+# Initialize database
+logger.logger.info("Initializing database...")
+init_db()
+logger.logger.info("Database initialized")
 
 # Bot setup
 intents = discord.Intents.default()
@@ -73,7 +80,8 @@ async def load_extensions():
         'cogs.ai_chat',
         'cogs.memory',
         'cogs.file_manager',
-        'cogs.github_integration'
+        'cogs.github_integration',
+        'cogs.admin'
     ]
 
     for cog in cogs:
@@ -88,7 +96,7 @@ async def load_extensions():
 async def main():
     async with bot:
         await load_extensions()
-        await bot.start(os.getenv('DISCORD_TOKEN'))
+        await bot.start(DISCORD_TOKEN)
 
 
 if __name__ == "__main__":

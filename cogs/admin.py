@@ -1,64 +1,38 @@
-import discord
+# cogs/admin.py
 from discord.ext import commands
-from database.models import init_db, get_db, GitHubRepo, FileMetadata, Conversation
-from utils.logger import get_logger
 
-logger = get_logger(__name__)
+from database.models import init_db, engine, Base
 
 
 class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name='dbinit')
-    @commands.is_owner()  # Only bot owner can run this
+    @commands.command(name='initdb')
+    @commands.has_permissions(administrator=True)
     async def initialize_database(self, ctx):
-        """Force database initialization"""
+        """Initialize the database tables (admin only)"""
         try:
             await init_db()
-            await ctx.send("✅ Database tables initialized successfully")
+            await ctx.send("✅ Database tables created successfully")
         except Exception as e:
-            await ctx.send(f"❌ Database initialization failed: {str(e)}")
+            await ctx.send(f"❌ Error initializing database: {str(e)}")
 
-    @commands.command(name='dbstats')
-    async def database_stats(self, ctx):
-        """Show database statistics"""
+    @commands.command(name='dropdb')
+    @commands.has_permissions(administrator=True)
+    async def drop_database(self, ctx):
+        """Drop all database tables (admin only, DANGEROUS)"""
+        confirm_msg = await ctx.send("⚠️ **DANGER**: This will delete ALL data! Type `!confirm` within 30 seconds to proceed.")
+
+        def check(m):
+            return m.author == ctx.author and m.content == '!confirm' and m.channel == ctx.channel
+
         try:
-            db = get_db()
-
-            repo_count = db.query(GitHubRepo).count()
-            file_count = db.query(FileMetadata).count()
-            conv_count = db.query(Conversation).count()
-
-            embed = discord.Embed(
-                title="Database Statistics",
-                color=0x00ff00
-            )
-            embed.add_field(name="GitHub Repos", value=repo_count, inline=True)
-            embed.add_field(name="Files", value=file_count, inline=True)
-            embed.add_field(name="Conversations", value=conv_count, inline=True)
-
-            await ctx.send(embed=embed)
-
-            db.close()
+            await self.bot.wait_for('message', check=check, timeout=30.0)
+            Base.metadata.drop_all(engine)
+            await ctx.send("💥 All database tables dropped")
         except Exception as e:
-            await ctx.send(f"❌ Error getting stats: {str(e)}")
-
-    @commands.command(name='dbtest')
-    @commands.is_owner()
-    async def test_database(self, ctx):
-        """Test database connection"""
-        try:
-            db = get_db()
-            result = db.execute("SELECT 1").scalar()
-            db.close()
-
-            if result == 1:
-                await ctx.send("✅ Database connection successful!")
-            else:
-                await ctx.send("❌ Database returned unexpected result")
-        except Exception as e:
-            await ctx.send(f"❌ Database connection failed: {str(e)}")
+            await ctx.send(f"Operation cancelled or error occurred: {str(e)}")
 
 
 async def setup(bot):

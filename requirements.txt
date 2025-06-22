@@ -13,3 +13,4 @@ PyPDF2
 python-magic
 tiktoken
 pymysql
+cryptography

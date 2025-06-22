@@ -1,24 +1,24 @@
-import os
 from datetime import datetime, UTC
 
 import discord
 from discord.ext import commands
 from github import Github
 
+from config import GITHUB_TOKEN
 from database.models import GitHubRepo, get_db
 
 
 class GitHubCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.github = Github(os.getenv('GITHUB_TOKEN'))
+        self.github = Github(GITHUB_TOKEN)
 
     @commands.command(name='address')
     async def add_repository(self, ctx, repo_url: str):
         """
         Add a GitHub repository to track in this channel
-        Usage: !addrepo https://github.com/user/repo
-        Usage: !addrepo user/repo
+        Usage: !address https://github.com/user/repo
+        Usage: !address user/repo
         """
         # Parse repository name from URL
         if repo_url.startswith('https://github.com/'):
@@ -33,41 +33,43 @@ class GitHubCog(commands.Cog):
             # Save to database
             db = get_db()
 
-            # Check if already exists
-            existing = db.query(GitHubRepo).filter(
-                GitHubRepo.repo_name == repo_name,
-                GitHubRepo.channel_id == str(ctx.channel.id)
-            ).first()
+            try:
+                # Check if already exists
+                existing = db.query(GitHubRepo).filter(
+                    GitHubRepo.repo_name == repo_name,
+                    GitHubRepo.channel_id == str(ctx.channel.id)
+                ).first()
 
-            if existing:
-                await ctx.send(f"❌ Repository {repo_name} is already tracked in this channel")
+                if existing:
+                    await ctx.send(f"❌ Repository {repo_name} is already tracked in this channel")
+                    db.close()
+                    return
+
+                github_repo = GitHubRepo(
+                    repo_name=repo_name,
+                    repo_url=repo.html_url,
+                    channel_id=str(ctx.channel.id),
+                    is_active=True,
+                    added_by=str(ctx.author.id),
+                    added_timestamp=datetime.now(UTC)
+                )
+
+                db.add(github_repo)
+                db.commit()
+
+                embed = discord.Embed(
+                    title="Repository Added",
+                    description=f"Now tracking: **{repo_name}**",
+                    color=0x00ff00
+                )
+                embed.add_field(name="Description", value=repo.description or "No description", inline=False)
+                embed.add_field(name="Language", value=repo.language or "Unknown", inline=True)
+                embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
+                embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
+
+                await ctx.send(embed=embed)
+            finally:
                 db.close()
-                return
-
-            github_repo = GitHubRepo(
-                repo_name=repo_name,
-                repo_url=repo.html_url,
-                channel_id=str(ctx.channel.id),
-                added_by=str(ctx.author.id),
-                is_active=True,
-                added_timestamp=datetime.now(UTC)
-            )
-
-            db.add(github_repo)
-            db.commit()
-            db.close()
-
-            embed = discord.Embed(
-                title="Repository Added",
-                description=f"Now tracking: **{repo_name}**",
-                color=0x00ff00
-            )
-            embed.add_field(name="Description", value=repo.description or "No description", inline=False)
-            embed.add_field(name="Language", value=repo.language or "Unknown", inline=True)
-            embed.add_field(name="Stars", value=repo.stargazers_count, inline=True)
-            embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
-
-            await ctx.send(embed=embed)
 
         except Exception as e:
             await ctx.send(f"❌ Error adding repository: {str(e)}")
@@ -110,9 +112,10 @@ class GitHubCog(commands.Cog):
             await ctx.send("❌ Please specify a repository name")
             return
 
+        db = None
         try:
-            # Check if repo is tracked in this channel
             db = get_db()
+            # Check if repo is tracked in this channel
             tracked_repo = db.query(GitHubRepo).filter(
                 GitHubRepo.repo_name == repo_name,
                 GitHubRepo.channel_id == str(ctx.channel.id),
@@ -150,9 +153,10 @@ class GitHubCog(commands.Cog):
                 embed.add_field(name="Recent Commits", value=recent_commits, inline=False)
 
             await ctx.send(embed=embed)
-
         except Exception as e:
             await ctx.send(f"❌ Error getting repository info: {str(e)}")
+        finally:
+            db.close()
 
     @commands.command(name='issues')
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
@@ -161,6 +165,7 @@ class GitHubCog(commands.Cog):
         Usage: !issues user/repo
         Usage: !issues user/repo closed
         """
+        db = None
         try:
             # Verify repo is tracked
             db = get_db()
@@ -199,6 +204,8 @@ class GitHubCog(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"❌ Error listing issues: {str(e)}")
+        finally:
+            db.close()
 
     @commands.command(name='createissue')
     async def create_issue(self, ctx, repo_name: str, title: str, *, body: str = ""):
@@ -206,6 +213,7 @@ class GitHubCog(commands.Cog):
         Create a new issue in a tracked repository
         Usage: !createissue user/repo "Bug in authentication" This is the issue description
         """
+        db = None
         try:
             # Verify repo is tracked
             db = get_db()
@@ -241,6 +249,8 @@ class GitHubCog(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"❌ Error creating issue: {str(e)}")
+        finally:
+            db.close()
 
     @commands.command(name='prs')
     async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
@@ -249,6 +259,7 @@ class GitHubCog(commands.Cog):
         Usage: !prs user/repo
         Usage: !prs user/repo closed
         """
+        db = None
         try:
             # Verify repo is tracked
             db = get_db()
@@ -286,6 +297,8 @@ class GitHubCog(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"❌ Error listing pull requests: {str(e)}")
+        finally:
+            db.close()
 
     @commands.command(name='removerepo')
     async def remove_repository(self, ctx, repo_name: str):
