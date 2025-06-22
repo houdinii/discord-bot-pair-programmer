@@ -165,37 +165,69 @@ class AIChatCog(commands.Cog):
                     ai_model="openai:chatgpt-4o-latest"
                 )
 
-                # Send response
+                # Send response - FIXED PART
                 embed = discord.Embed(
                     title=f"📄 {file_metadata.filename}",
-                    description=f"**Question:** {question}",
                     color=0x0099ff
                 )
+
+                # Safely add the question field
+                if len(question) > 1024:
+                    embed.add_field(name="Question", value=question[:1021] + "...", inline=False)
+                else:
+                    embed.add_field(name="Question", value=question, inline=False)
 
                 # Add file info
                 embed.set_footer(text=f"File ID: {file_id} | {len(sorted_chunks)} chunks analyzed")
 
-                # Split response if needed
-                if len(response) > 1024:
-                    # First part in embed
-                    embed.add_field(name="Answer", value=response[:1024] + "...", inline=False)
+                # Handle response based on length
+                if len(response) <= 1024:
+                    # Response fits in embed
+                    embed.add_field(name="Answer", value=response, inline=False)
+                    await ctx.send(embed=embed)
+                elif len(response) <= 4000:
+                    # Response fits in embed description + field
+                    embed.description = f"**Answer:**\n{response[:2000]}"
+                    if len(response) > 2000:
+                        embed.add_field(
+                            name="Answer (continued)",
+                            value=response[2000:3024],  # Max 1024 chars
+                            inline=False
+                        )
                     await ctx.send(embed=embed)
 
-                    # Send rest in formatted messages
-                    remaining = response[1024:]
+                    # Send any remaining text
+                    if len(response) > 3024:
+                        remaining = response[3024:]
+                        while remaining:
+                            chunk = remaining[:1900]
+                            remaining = remaining[1900:]
+                            await ctx.send(chunk)
+                else:
+                    # Very long response - send embed with preview, then full response
+                    embed.add_field(
+                        name="Answer Preview",
+                        value=response[:1021] + "...",
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
+
+                    # Send full response in chunks
+                    await ctx.send("**Full Answer:**")
+                    remaining = response
                     while remaining:
                         chunk = remaining[:1900]
                         remaining = remaining[1900:]
+                        if len(chunk) > 1900:  # Safety check
+                            chunk = chunk[:1900]
+                        await ctx.send(chunk)
 
-                        # Use a clean format instead of code blocks
-                        if remaining:  # More chunks coming
-                            await ctx.send(f"{chunk}\n*(continued...)*")
-                        else:  # Last chunk
-                            await ctx.send(chunk)
-                else:
-                    embed.add_field(name="Answer", value=response, inline=False)
-                    await ctx.send(embed=embed)
-
+        except discord.HTTPException as e:
+            logger.logger.error(f"Discord error in askdoc: {str(e)}", exc_info=True)
+            try:
+                await status_msg.edit(content=f"❌ Discord error: {str(e)}")
+            except Exception:
+                await ctx.send(f"❌ Error sending response: {str(e)}")
         except Exception as e:
             logger.logger.error(f"Error in askdoc command: {str(e)}", exc_info=True)
             try:
