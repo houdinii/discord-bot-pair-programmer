@@ -81,97 +81,127 @@ class AIChatCog(commands.Cog):
             await ctx.send("❌ File not found")
             return
 
-        async with ctx.typing():
-            # Search specifically for this document's content
-            doc_results = await self.vector_service.search_documents(
-                query=question,
-                channel_id=str(ctx.channel.id),
-                file_id=str(file_id),
-                top_k=10
-            )
+        # Send initial status message
+        status_msg = await ctx.send(f"🔍 Analyzing {file_metadata.filename}...")
 
-            logger.log_data('IN', 'ASKDOC_SEARCH', {
-                'file_id': file_id,
-                'question': question,
-                'results_found': len(doc_results)
-            })
-
-            if not doc_results:
-                # Try a broader search without the question filter
+        try:
+            async with ctx.typing():
+                # Search specifically for this document's content
                 doc_results = await self.vector_service.search_documents(
-                    query=file_metadata.filename,  # Search by filename
+                    query=question,
                     channel_id=str(ctx.channel.id),
                     file_id=str(file_id),
                     top_k=10
                 )
 
+                logger.log_data('IN', 'ASKDOC_SEARCH', {
+                    'file_id': file_id,
+                    'question': question,
+                    'results_found': len(doc_results)
+                })
+
                 if not doc_results:
-                    await ctx.send("❌ No content found for this document. It may not be indexed properly.")
-                    return
+                    # Try a broader search without the question filter
+                    doc_results = await self.vector_service.search_documents(
+                        query=file_metadata.filename,  # Search by filename
+                        channel_id=str(ctx.channel.id),
+                        file_id=str(file_id),
+                        top_k=10
+                    )
 
-            # Build context from document chunks
-            doc_context = f"Document: {file_metadata.filename}\n"
-            doc_context += f"Description: {file_metadata.description}\n"
-            doc_context += f"File Type: {file_metadata.file_type or 'Unknown'}\n\n"
-            doc_context += "Document Content:\n\n"
+                    if not doc_results:
+                        await status_msg.edit(
+                            content="❌ No content found for this document. It may not be indexed properly.")
+                        return
 
-            # Sort chunks by chunk_index to maintain order
-            sorted_chunks = sorted(doc_results,
-                                   key=lambda x: x['metadata'].get('chunk_index', 0))
+                # Build context from document chunks
+                doc_context = f"Document: {file_metadata.filename}\n"
+                doc_context += f"Description: {file_metadata.description}\n"
+                doc_context += f"File Type: {file_metadata.file_type or 'Unknown'}\n\n"
+                doc_context += "=== DOCUMENT CONTENT ===\n\n"
 
-            for chunk in sorted_chunks[:5]:  # Use top 5 chunks
-                chunk_content = chunk['content']
-                # Remove the enhanced search prefix if present
-                if "Content:\n" in chunk_content:
-                    chunk_content = chunk_content.split("Content:\n", 1)[1]
+                # Sort chunks by chunk_index to maintain order
+                sorted_chunks = sorted(doc_results,
+                                       key=lambda x: x['metadata'].get('chunk_index', 0))
 
-                chunk_idx = chunk['metadata'].get('chunk_index', 0)
-                total_chunks = chunk['metadata'].get('total_chunks', 1)
-                doc_context += f"[Part {chunk_idx + 1}/{total_chunks}]\n{chunk_content}\n\n---\n\n"
+                # Use more chunks for better context
+                for chunk in sorted_chunks[:8]:  # Increased from 5 to 8
+                    chunk_content = chunk['content']
+                    # Remove the enhanced search prefix if present
+                    if "Content:\n" in chunk_content:
+                        chunk_content = chunk_content.split("Content:\n", 1)[1]
 
-            # Create a system message that emphasizes using the document content
-            system_msg = f"""You are analyzing the document '{file_metadata.filename}'. 
-            Use ONLY the provided document content to answer the question. 
-            If the answer is not in the provided content, say so clearly."""
+                    chunk_idx = chunk['metadata'].get('chunk_index', 0)
+                    total_chunks = chunk['metadata'].get('total_chunks', 1)
+                    doc_context += f"[Part {chunk_idx + 1}/{total_chunks}]\n{chunk_content}\n\n"
 
-            # Get AI response with document context
-            response = await self.ai_service.get_ai_response(
-                provider='openai',
-                model='chatgpt-4o-latest',
-                user_message=f"{system_msg}\n\nQuestion: {question}",
-                context=doc_context
-            )
+                # Update status
+                await status_msg.edit(content=f"🤔 Thinking about your question...")
 
-            # Store this Q&A in vector database for future reference
-            await self.vector_service.store_conversation(
-                user_id=str(ctx.author.id),
-                channel_id=str(ctx.channel.id),
-                message=f"[Document Q&A - {file_metadata.filename}] {question}",
-                response=response,
-                ai_model="openai:chatgpt-4o-latest"
-            )
+                # Create the question in a format that works better with the AI service
+                formatted_question = f"""Based on the document '{file_metadata.filename}', please answer the following question:
 
-            # Send response
-            embed = discord.Embed(
-                title=f"📄 {file_metadata.filename}",
-                description=f"**Question:** {question}",
-                color=0x0099ff
-            )
+    Question: {question}
 
-            # Split response if needed
-            if len(response) > 1024:
-                embed.add_field(name="Answer", value=response[:1024] + "...", inline=False)
-                await ctx.send(embed=embed)
+    Please base your answer only on the content provided from the document."""
 
-                # Send rest in code blocks
-                remaining = response[1024:]
-                while remaining:
-                    chunk = remaining[:1900]
-                    await ctx.send(f"```{chunk}```")
-                    remaining = remaining[1900:]
-            else:
-                embed.add_field(name="Answer", value=response, inline=False)
-                await ctx.send(embed=embed)
+                # Get AI response with document context
+                response = await self.ai_service.get_ai_response(
+                    provider='openai',
+                    model='chatgpt-4o-latest',
+                    user_message=formatted_question,
+                    context=doc_context
+                )
+
+                # Delete status message
+                await status_msg.delete()
+
+                # Store this Q&A in vector database for future reference
+                await self.vector_service.store_conversation(
+                    user_id=str(ctx.author.id),
+                    channel_id=str(ctx.channel.id),
+                    message=f"[Document Q&A - {file_metadata.filename}] {question}",
+                    response=response,
+                    ai_model="openai:chatgpt-4o-latest"
+                )
+
+                # Send response
+                embed = discord.Embed(
+                    title=f"📄 {file_metadata.filename}",
+                    description=f"**Question:** {question}",
+                    color=0x0099ff
+                )
+
+                # Add file info
+                embed.set_footer(text=f"File ID: {file_id} | {len(sorted_chunks)} chunks analyzed")
+
+                # Split response if needed
+                if len(response) > 1024:
+                    # First part in embed
+                    embed.add_field(name="Answer", value=response[:1024] + "...", inline=False)
+                    await ctx.send(embed=embed)
+
+                    # Send rest in formatted messages
+                    remaining = response[1024:]
+                    while remaining:
+                        chunk = remaining[:1900]
+                        remaining = remaining[1900:]
+
+                        # Use a clean format instead of code blocks
+                        if remaining:  # More chunks coming
+                            await ctx.send(f"{chunk}\n*(continued...)*")
+                        else:  # Last chunk
+                            await ctx.send(chunk)
+                else:
+                    embed.add_field(name="Answer", value=response, inline=False)
+                    await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.logger.error(f"Error in askdoc command: {str(e)}", exc_info=True)
+            try:
+                await status_msg.edit(content=f"❌ Error: {str(e)}")
+            except Exception:
+                await ctx.send(f"❌ Error processing document question: {str(e)}")
 
     @commands.command(name='compare')
     async def compare_documents(self, ctx, file_id1: int, file_id2: int):
@@ -182,6 +212,130 @@ class AIChatCog(commands.Cog):
         # Implementation for comparing two documents
         # This would fetch both documents and ask AI to compare them
         pass
+
+    @commands.command(name='asksimple')
+    async def ask_simple(self, ctx, file_id: int, *, question: str):
+        """
+        Simpler version of askdoc for debugging
+        Usage: !asksimple 123 What is this about?
+        """
+        from database.models import FileMetadata, get_db
+
+        # Get file info
+        db = get_db()
+        file_metadata = db.query(FileMetadata).filter(
+            FileMetadata.id == file_id
+        ).first()
+        db.close()
+
+        if not file_metadata:
+            await ctx.send("❌ File not found")
+            return
+
+        await ctx.send(f"📄 Searching {file_metadata.filename}...")
+
+        # Get document chunks
+        doc_results = await self.vector_service.search_documents(
+            query=question,
+            channel_id=str(ctx.channel.id),
+            file_id=str(file_id),
+            top_k=5
+        )
+
+        if not doc_results:
+            await ctx.send("❌ No content found")
+            return
+
+        # Build simple context
+        context = f"From document '{file_metadata.filename}':\n\n"
+        for i, chunk in enumerate(doc_results[:3]):
+            content = chunk['content']
+            if "Content:\n" in content:
+                content = content.split("Content:\n", 1)[1]
+            context += f"{content[:500]}...\n\n"
+
+        # Simple message
+        message = f"Question about {file_metadata.filename}: {question}"
+
+        # Get response using the standard chat flow
+        response = await self.ai_service.get_ai_response(
+            provider='openai',
+            model='chatgpt-4o-latest',
+            user_message=message,
+            context=context
+        )
+
+        # Send response
+        await self.send_long_message(ctx, response, provider='openai', model='chatgpt-4o-latest')
+
+    @commands.command(name='debugask')
+    async def debug_askdoc(self, ctx, file_id: int):
+        """
+        Debug what askdoc sees
+        Usage: !debugask 2
+        """
+        from database.models import FileMetadata, get_db
+
+        db = get_db()
+        file_metadata = db.query(FileMetadata).filter(
+            FileMetadata.id == file_id
+        ).first()
+        db.close()
+
+        if not file_metadata:
+            await ctx.send("❌ File not found")
+            return
+
+        # Search for chunks
+        doc_results = await self.vector_service.search_documents(
+            query="main findings results conclusion",  # Common terms
+            channel_id=str(ctx.channel.id),
+            file_id=str(file_id),
+            top_k=3
+        )
+
+        embed = discord.Embed(
+            title=f"Debug: {file_metadata.filename}",
+            color=0xffff00
+        )
+
+        embed.add_field(name="File ID", value=str(file_id), inline=True)
+        embed.add_field(name="Chunks Found", value=str(len(doc_results)), inline=True)
+
+        if doc_results:
+            # Show first chunk
+            content = doc_results[0]['content']
+            if "Content:\n" in content:
+                content = content.split("Content:\n", 1)[1]
+
+            embed.add_field(
+                name="First Chunk Preview",
+                value=content[:300] + "...",
+                inline=False
+            )
+
+            # Test AI call with minimal context
+            try:
+                test_response = await self.ai_service.get_ai_response(
+                    provider='openai',
+                    model='chatgpt-4o-latest',
+                    user_message="What is this document about?",
+                    context=content[:500]
+                )
+
+                embed.add_field(
+                    name="AI Test Response",
+                    value=test_response[:300] + "...",
+                    inline=False
+                )
+            except Exception as e:
+                embed.add_field(
+                    name="AI Test Error",
+                    value=str(e),
+                    inline=False
+                )
+
+        await ctx.send(embed=embed)
 
     @commands.command(name='chat')
     @log_method()
