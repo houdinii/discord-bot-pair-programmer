@@ -1,18 +1,17 @@
-import os
-
-import os
-import discord
-from discord.ext import commands
 import asyncio
-from dotenv import load_dotenv
+import os
 
+import discord
 # Import cogs
 from cogs.ai_chat import AIChatCog
-from cogs.memory import MemoryCog
 from cogs.file_manager import FileManagerCog
 from cogs.github_integration import GitHubCog
-# Version 0.1.2.3
-print("Starting Pair Programmer Bot Version 0.1.2.3...")
+from cogs.memory import MemoryCog
+from discord.ext import commands
+from dotenv import load_dotenv
+
+# Version 0.1.2.4
+print("Starting Pair Programmer Bot Version 0.1.2.4...")
 
 load_dotenv()
 
