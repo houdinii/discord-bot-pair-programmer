@@ -141,6 +141,34 @@ class MemoryCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    @commands.command(name='list_vectors')
+    async def list_vectors(self, ctx, limit: int = 10):
+        """List vector IDs in the namespace"""
+        vector_ids = await self.vector_service.list_all_in_namespace(limit=limit)
+
+        if not vector_ids:
+            await ctx.send("❌ No vectors found in namespace")
+            return
+
+        # Fetch the actual vectors
+        vectors = await self.vector_service.fetch_by_ids(vector_ids[:limit])
+
+        embed = discord.Embed(
+            title=f"Vectors in Namespace ({len(vector_ids)} total, showing {len(vectors)})",
+            color=0x00ff00
+        )
+
+        for v in vectors:
+            metadata = v["metadata"]
+            if metadata.get("type") == "memory" and metadata.get("channel_id") == str(ctx.channel.id):
+                embed.add_field(
+                    name=f"Tag: {metadata.get('tag', 'N/A')}",
+                    value=f"Content: {metadata.get('content', 'N/A')[:100]}...",
+                    inline=False
+                )
+
+        await ctx.send(embed=embed)
+
     @commands.command(name='forget')
     async def forget_memory(self, ctx, tag: str):
         """
