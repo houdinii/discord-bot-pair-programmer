@@ -1,3 +1,4 @@
+# cogs/memory.py
 import discord
 from discord.ext import commands
 
@@ -37,10 +38,11 @@ class MemoryCog(commands.Cog):
         """
         Recall memories by searching for similar content
         Usage: !recall authentication
-        Usage: !recall JWT tokens
+        Usage: !recall React PostgreSQL
+        Note: This searches the CONTENT of memories, not the tags. Use !list_memories to see all tags.
         """
 
-        # Search for memories
+        # Search for memories by content
         results = await self.vector_service.search_similar(
             query=query,
             channel_id=str(ctx.channel.id),
@@ -49,7 +51,8 @@ class MemoryCog(commands.Cog):
         )
 
         if not results:
-            await ctx.send(f"❌ No memories found related to: {query}")
+            await ctx.send(
+                f"❌ No memories found with content related to: {query}\n💡 Tip: !recall searches memory content, not tags. Use !list_memories to see all memory tags.")
             return
 
         embed = discord.Embed(
@@ -62,8 +65,70 @@ class MemoryCog(commands.Cog):
             score = result['score']
 
             embed.add_field(
-                name=f"Tag: {metadata['tag']} (Relevance: {score:.2f})",
-                value=f"{metadata['content']}\n*Saved: {metadata['timestamp'][:10]}*",
+                name=f"Tag: {metadata.get('tag', 'N/A')} (Relevance: {score:.2f})",
+                value=f"{metadata.get('content', 'N/A')}\n*Saved: {metadata.get('timestamp', 'N/A')[:10]}*",
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='get_memory')
+    async def get_memory_by_tag(self, ctx, tag: str):
+        """
+        Get a specific memory by its tag
+        Usage: !get_memory project_stack
+        """
+
+        # Get memory by exact tag match
+        memory = await self.vector_service.get_memory_by_tag(
+            channel_id=str(ctx.channel.id),
+            tag=tag
+        )
+
+        if not memory:
+            await ctx.send(f"❌ No memory found with tag: {tag}")
+            return
+
+        embed = discord.Embed(
+            title=f"Memory: {tag}",
+            description=memory['content'],
+            color=0x0099ff
+        )
+        embed.add_field(name="Saved", value=memory['timestamp'][:10], inline=True)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='list_memories')
+    async def list_memories(self, ctx):
+        """
+        List all memory tags in this channel
+        Usage: !list_memories
+        """
+
+        memories = await self.vector_service.list_memory_tags(
+            channel_id=str(ctx.channel.id)
+        )
+
+        if not memories:
+            await ctx.send("❌ No memories saved in this channel")
+            return
+
+        embed = discord.Embed(
+            title=f"Saved Memories ({len(memories)} total)",
+            color=0x0099ff
+        )
+
+        for memory in memories[:25]:  # Discord embed field limit
+            embed.add_field(
+                name=f"Tag: {memory['tag']}",
+                value=f"{memory['content'][:100]}..." if len(memory['content']) > 100 else memory['content'],
+                inline=False
+            )
+
+        if len(memories) > 25:
+            embed.add_field(
+                name="Note",
+                value=f"Showing first 25 of {len(memories)} memories",
                 inline=False
             )
 
@@ -76,7 +141,7 @@ class MemoryCog(commands.Cog):
         Usage: !forget project_auth
         """
 
-        # Delete from vector database - CORRECTED METHOD NAME
+        # Delete from vector database
         success = await self.vector_service.delete_by_tag(
             channel_id=str(ctx.channel.id),
             tag=tag

@@ -2,37 +2,50 @@
 
 import os
 
+from langchain.chat_models import ChatOpenAI, ChatAnthropic
 from langchain.schema import SystemMessage, HumanMessage
-from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
 
 
 class AIService:
     def __init__(self):
-        # LangChain handles all HTTP under the hood—no proxies errors
+        # Updated with correct model names
         self.openai_llm = ChatOpenAI(
-            model="gpt-4",
+            model_name="chatgpt-4o-latest",  # Updated default
             temperature=0.7,
-            api_key=os.getenv("OPENAI_API_KEY")
+            openai_api_key=os.getenv("OPENAI_API_KEY")
         )
-        # noinspection PyArgumentList
         self.anthropic_llm = ChatAnthropic(
-            model_name="claude-3-7-sonnet-latest",
+            model="claude-sonnet-4-0",  # Updated default
             temperature=0.7,
-            timeout=300,
-            api_key=os.getenv("ANTHROPIC_API_KEY")
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
         )
 
+        # Available models mapping
+        self.available_models = {
+            "openai": [
+                "gpt-4o", "chatgpt-4o-latest", "gpt-4o-mini",
+                "gpt-4.1", "gpt-4.1-mini", "gpt-3.5-turbo",
+                "gpt-4", "gpt-4-turbo", "gpt-4.5",
+                "o1", "o1-2024-12-17", "o1-preview", "o1-mini",
+                "o3-mini", "o3"
+            ],
+            "anthropic": [
+                "claude-opus-4-0", "claude-sonnet-4-0",
+                "claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest",
+                "claude-3-5-haiku-latest", "claude-3-opus-latest"
+            ]
+        }
+
     async def get_ai_response(
-        self,
-        provider: str,
-        user_message: str,
-        context: str = None
+            self,
+            provider: str,
+            model: str,
+            user_message: str,
+            context: str = None
     ) -> str:
         """
         provider: "openai" or "anthropic"
-        model is ignored here (we've hard-wired one per provider),
-        but you could map it if you want multiple.
+        model: specific model name
         """
         # Build LangChain messages
         msgs = []
@@ -40,11 +53,22 @@ class AIService:
             msgs.append(SystemMessage(content=f"You are a helpful pair-programmer assistant.\nContext:\n{context}"))
         msgs.append(HumanMessage(content=user_message))
 
-        # Choose the right LLM
-        llm = self.openai_llm if provider == "openai" else self.anthropic_llm
+        # Choose the right LLM with specific model
+        if provider == "openai":
+            llm = ChatOpenAI(
+                model_name=model,
+                temperature=0.7,
+                openai_api_key=os.getenv("OPENAI_API_KEY")
+            )
+        else:  # anthropic
+            llm = ChatAnthropic(
+                model=model,
+                temperature=0.7,
+                anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+            )
 
-        # LangChain will select the model you passed in at init
-        result = await llm.agenerate([[*msgs]])
+        # Get response
+        result = await llm.agenerate([msgs])
         return result.generations[0][0].text
 
     def count_tokens(self, text: str, model: str = "gpt-4") -> int:

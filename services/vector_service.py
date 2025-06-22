@@ -160,3 +160,52 @@ class VectorService:
             "dimension": stats.get("dimension", 0),
             "index_fullness": stats.get("index_fullness", 0)
         }
+
+    async def get_memory_by_tag(self, channel_id: str, tag: str) -> dict:
+        """Get a specific memory by its exact tag"""
+        res = index.query(
+            query="",  # Empty query for filter-only search
+            top_k=1,
+            include_metadata=True,
+            filter={
+                "channel_id": {"$eq": channel_id},
+                "tag": {"$eq": tag},
+                "type": {"$eq": "memory"}
+            }
+        )
+
+        if res.matches:
+            m = res.matches[0]
+            return {
+                "tag": m.metadata.get("tag"),
+                "content": m.metadata.get("content"),
+                "timestamp": m.metadata.get("timestamp")
+            }
+        return None
+
+    async def list_memory_tags(self, channel_id: str) -> list[dict]:
+        """List all memory tags in a channel"""
+        res = index.query(
+            query="",  # Empty query to get all
+            top_k=100,
+            include_metadata=True,
+            filter={
+                "channel_id": {"$eq": channel_id},
+                "type": {"$eq": "memory"}
+            }
+        )
+
+        memories = []
+        seen_tags = set()
+
+        for m in res.matches:
+            tag = m.metadata.get("tag")
+            if tag and tag not in seen_tags:
+                seen_tags.add(tag)
+                memories.append({
+                    "tag": tag,
+                    "content": m.metadata.get("content", ""),
+                    "timestamp": m.metadata.get("timestamp", "")
+                })
+
+        return sorted(memories, key=lambda x: x["tag"])

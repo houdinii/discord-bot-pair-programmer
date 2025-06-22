@@ -12,17 +12,56 @@ class AIChatCog(commands.Cog):
         self.ai_service = AIService()
         self.vector_service = VectorService()
 
+    async def send_long_message(self, ctx, content: str, provider: str = None, model: str = None):
+        """Helper to send long messages split into chunks"""
+        # Add header if provider/model specified
+        if provider and model:
+            header = f"**{provider.title()} ({model}):**\n"
+            content = header + content
+
+        # Discord's limit is 2000 chars
+        if len(content) <= 1990:
+            await ctx.send(content)
+        else:
+            # Split into chunks
+            chunks = []
+            lines = content.split('\n')
+            current_chunk = ""
+
+            for line in lines:
+                if len(current_chunk) + len(line) + 1 > 1990:
+                    chunks.append(current_chunk)
+                    current_chunk = line
+                else:
+                    current_chunk += ("\n" if current_chunk else "") + line
+
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            # Send chunks
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    await ctx.send(chunk)
+                else:
+                    # Add continuation marker for subsequent chunks
+                    await ctx.send(f"```\n{chunk}\n```" if not chunk.startswith("```") else chunk)
+
     @commands.command(name='chat')
-    async def chat_with_ai(self, ctx, provider: str = 'openai', model: str = 'gpt-4', *, message: str):
+    async def chat_with_ai(self, ctx, provider: str = 'openai', model: str = 'chatgpt-4o-latest', *, message: str):
         """
         Chat with AI models with context from previous conversations
-        Usage: !chat openai gpt-4 How do I implement a binary search?
-        Usage: !chat anthropic claude-3-sonnet What's the difference between async and sync?
+        Usage: !chat openai chatgpt-4o-latest How do I implement a binary search?
+        Usage: !chat anthropic claude-sonnet-4-0 What's the difference between async and sync?
         """
 
         # Validate provider
         if provider not in ['openai', 'anthropic']:
             await ctx.send("❌ Provider must be 'openai' or 'anthropic'")
+            return
+
+        # Validate model
+        if model not in self.ai_service.available_models[provider]:
+            await ctx.send(f"❌ Model '{model}' not available for {provider}. Use !models to see available models.")
             return
 
         try:
@@ -35,9 +74,10 @@ class AIChatCog(commands.Cog):
                     max_context_length=2000
                 )
 
-                # Get AI response with context - FIXED PARAMETERS
+                # Get AI response with context
                 response = await self.ai_service.get_ai_response(
                     provider=provider,
+                    model=model,
                     user_message=message,
                     context=context
                 )
@@ -51,13 +91,8 @@ class AIChatCog(commands.Cog):
                     ai_model=f"{provider}:{model}"
                 )
 
-            # Split long responses
-            if len(response) > 2000:
-                chunks = [response[i:i + 2000] for i in range(0, len(response), 2000)]
-                for chunk in chunks:
-                    await ctx.send(f"```\n{chunk}\n```")
-            else:
-                await ctx.send(f"**{provider.title()} ({model}):**\n```\n{response}\n```")
+            # Send response with proper chunking
+            await self.send_long_message(ctx, response, provider, model)
 
         except Exception as e:
             print(f"[ERROR] Exception in !chat handler: {e}")
@@ -72,21 +107,25 @@ class AIChatCog(commands.Cog):
             color=0x00ff00
         )
 
+        # OpenAI models
+        openai_models = "\n".join([f"• {m}" for m in self.ai_service.available_models["openai"][:10]])
         embed.add_field(
             name="OpenAI",
-            value="• gpt-4\n• gpt-3.5",
+            value=openai_models,
             inline=True
         )
 
+        # Anthropic models
+        anthropic_models = "\n".join([f"• {m}" for m in self.ai_service.available_models["anthropic"]])
         embed.add_field(
             name="Anthropic",
-            value="• claude-3-opus\n• claude-3-sonnet\n• claude-3-haiku",
+            value=anthropic_models,
             inline=True
         )
 
         embed.add_field(
             name="Usage",
-            value="!chat [provider] [model] [your message]",
+            value="!chat [provider] [model] [your message]\n!quick [message] (uses chatgpt-4o-latest)",
             inline=False
         )
 
@@ -94,8 +133,8 @@ class AIChatCog(commands.Cog):
 
     @commands.command(name='quick')
     async def quick_chat(self, ctx, *, message: str):
-        """Quick chat with default model (GPT-4)"""
-        await self.chat_with_ai(ctx, 'openai', 'gpt-4', message=message)
+        """Quick chat with default model (chatgpt-4o-latest)"""
+        await self.chat_with_ai(ctx, 'openai', 'chatgpt-4o-latest', message=message)
 
     @commands.command(name='search')
     async def search_context(self, ctx, *, query: str):
