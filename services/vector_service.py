@@ -36,6 +36,7 @@ embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 def _gen_id(text: str, user: str, ts: str) -> str:
     """Generate a stable unique ID for each record."""
+    # noinspection PyTypeChecker
     return hashlib.md5(f"{user}_{ts}_{text[:50]}".encode()).hexdigest()
 
 
@@ -96,6 +97,85 @@ class VectorService:
         })
 
         return vid
+
+    async def store_document_chunk(self, filename: str, content: str,
+                                   user_id: str, channel_id: str,
+                                   metadata: Dict) -> str:
+        """Store a document chunk with additional metadata"""
+        ts = datetime.now(timezone.utc).isoformat()
+        text_content = f"Document [{filename}]: {content[:200]}..."
+        vid = _gen_id(text_content, user_id, ts)
+
+        doc = Document(
+            page_content=content,
+            metadata={
+                "id": vid,
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "filename": filename,
+                "timestamp": ts,
+                "type": "document",
+                **metadata  # Include additional metadata
+            }
+        )
+
+        vector_store = self._get_vector_store(namespace=channel_id)
+        vector_store.add_documents([doc], ids=[vid])
+        return vid
+
+    async def delete_document_chunks(self, file_id: str, channel_id: str) -> bool:
+        """Delete all chunks for a specific document"""
+        # Search for all chunks of this document
+        results = await self.search_similar(
+            query=f"file_id:{file_id}",
+            channel_id=channel_id,
+            content_type=["document"],
+            top_k=100
+        )
+
+        # Filter for exact file_id match
+        ids_to_delete = []
+        for result in results:
+            if str(result["metadata"].get("file_id")) == str(file_id):
+                ids_to_delete.append(result["id"])
+
+        if ids_to_delete:
+            index = pc.Index(INDEX_NAME)
+            index.delete(ids=ids_to_delete, namespace=channel_id)
+            return True
+        return False
+
+    async def get_document_stats(self, channel_id: str) -> Dict:
+        """Get statistics about documents in a channel"""
+        # Search for all documents
+        results = await self.search_similar(
+            query="",
+            channel_id=channel_id,
+            content_type=["document"],
+            top_k=1000
+        )
+
+        # Aggregate stats
+        unique_files = set()
+        total_chunks = 0
+        file_types = {}
+
+        for result in results:
+            metadata = result["metadata"]
+            if metadata.get("type") == "document":
+                file_id = metadata.get("file_id")
+                if file_id:
+                    unique_files.add(file_id)
+                    total_chunks += 1
+
+                    file_type = metadata.get("file_type", "unknown")
+                    file_types[file_type] = file_types.get(file_type, 0) + 1
+
+        return {
+            "unique_files": len(unique_files),
+            "total_chunks": total_chunks,
+            "file_types": file_types
+        }
 
     async def store_memory(self, user_id: str, channel_id: str,
                            tag: str, content: str) -> str:

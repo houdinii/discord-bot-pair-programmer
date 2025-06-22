@@ -1,5 +1,6 @@
 # cogs/ai_chat.py
 import discord
+from database.models import FileMetadata, get_db
 from discord.ext import commands
 
 from services.ai_service import AIService
@@ -61,6 +62,81 @@ class AIChatCog(commands.Cog):
                 else:
                     # Add continuation marker for further chunks
                     await ctx.send(f"```\n{chunk}\n```" if not chunk.startswith("```") else chunk)
+
+    @commands.command(name='askdoc')
+    async def ask_about_document(self, ctx, file_id: int, *, question: str):
+        """
+        Ask a question about a specific document
+        Usage: !askdoc 123 What is the main topic of this paper?
+        """
+        # Verify file exists
+        db = get_db()
+        file_metadata = db.query(FileMetadata).filter(
+            FileMetadata.id == file_id
+        ).first()
+        db.close()
+
+        if not file_metadata:
+            await ctx.send("❌ File not found")
+            return
+
+        async with ctx.typing():
+            # Search specifically for this document's content
+            doc_results = await self.vector_service.search_similar(
+                query=question,
+                channel_id=str(ctx.channel.id),
+                content_type=['document'],
+                top_k=10
+            )
+
+            # Filter for this specific file
+            relevant_chunks = [r for r in doc_results
+                               if str(r['metadata'].get('file_id')) == str(file_id)]
+
+            if not relevant_chunks:
+                await ctx.send("❌ No content found for this document. It may not be indexed.")
+                return
+
+            # Build context from document chunks
+            doc_context = f"Document: {file_metadata.filename}\nDescription: {file_metadata.description}\n\n"
+
+            for chunk in relevant_chunks[:5]:  # Use top 5 most relevant chunks
+                chunk_text = chunk['content']
+                doc_context += f"{chunk_text}\n\n---\n\n"
+
+            # Get AI response with document context
+            response = await self.ai_service.get_ai_response(
+                provider='openai',
+                model='chatgpt-4o-latest',
+                user_message=f"Based on the document '{file_metadata.filename}', {question}",
+                context=doc_context
+            )
+
+            # Send response
+            embed = discord.Embed(
+                title=f"Question about: {file_metadata.filename}",
+                description=question,
+                color=0x0099ff
+            )
+
+            # Split response if needed
+            if len(response) > 1024:
+                embed.add_field(name="Answer", value=response[:1024] + "...", inline=False)
+                await ctx.send(embed=embed)
+                await ctx.send(f"```{response[1024:]}```")
+            else:
+                embed.add_field(name="Answer", value=response, inline=False)
+                await ctx.send(embed=embed)
+
+    @commands.command(name='compare')
+    async def compare_documents(self, ctx, file_id1: int, file_id2: int):
+        """
+        Compare two documents
+        Usage: !compare 123 456
+        """
+        # Implementation for comparing two documents
+        # This would fetch both documents and ask AI to compare them
+        pass
 
     @commands.command(name='chat')
     @log_method()
