@@ -1,9 +1,10 @@
 discord.py
-httpx==0.27.2
+# httpx==0.27.2
 langchain
+langchain_pinecone
 langchain_openai
 langchain_anthropic
-aiofiles
+# aiofiles
 python-dotenv
 boto3
 PyGithub
@@ -13,4 +14,3 @@ alembic
 PyPDF2
 python-magic
 tiktoken
-pinecone
