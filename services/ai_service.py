@@ -17,7 +17,7 @@ class AIService:
         )
         # noinspection PyArgumentList
         self.anthropic_llm = ChatAnthropic(
-            model_name="claude-3-sonnet",
+            model_name="claude-3-7-sonnet-latest",
             temperature=0.7,
             timeout=300,
             api_key=os.getenv("ANTHROPIC_API_KEY")
