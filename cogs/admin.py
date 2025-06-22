@@ -13,7 +13,7 @@ class AdminCog(commands.Cog):
     async def initialize_database(self, ctx):
         """Initialize the database tables (admin only)"""
         try:
-            await init_db()
+            init_db()
             await ctx.send("✅ Database tables created successfully")
         except Exception as e:
             await ctx.send(f"❌ Error initializing database: {str(e)}")
