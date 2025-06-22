@@ -1,8 +1,10 @@
+# database/models.py
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, UTC
-import os
+
+from config import DATABASE_URL
 
 Base = declarative_base()
 
@@ -45,11 +47,12 @@ class GitHubRepo(Base):
 
 
 # Database initialization
-engine = create_engine(os.getenv('DATABASE_URL', 'sqlite:///bot_memory.db'))
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-async def init_db():
+def init_db():
+    """Create all tables if they don't exist"""
     Base.metadata.create_all(bind=engine)
 
 
@@ -58,4 +61,4 @@ def get_db():
     try:
         return db
     finally:
-        db.close()
+        pass  # Don't close here, let the caller close

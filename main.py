@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from config import DISCORD_TOKEN, DEBUG
 from database.models import init_db
 from utils.logger import get_logger
-from database.models import init_db  # Add this import
 
 # Load environment variables
 load_dotenv()
@@ -31,15 +30,6 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 @bot.event
 async def on_ready():
     logger.logger.info(f'Bot logged in as {bot.user}')
-
-    # Initialize database tables
-    try:
-        await init_db()
-        logger.logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.logger.error(f"Failed to initialize database: {e}")
-        # Continue running even if DB init fails
-
     logger.log_data('OUT', 'BOT_READY', {
         'username': str(bot.user),
         'guild_count': len(bot.guilds),
@@ -66,12 +56,6 @@ async def on_command_error(ctx, error):
         'error': str(error),
         'user': str(ctx.author)
     })
-
-    # Send user-friendly error message
-    if isinstance(error, commands.CommandNotFound):
-        return  # Ignore command not found
-
-    await ctx.send(f"❌ An error occurred: {str(error)[:200]}")
 
 
 # Load cogs
