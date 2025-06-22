@@ -1,7 +1,8 @@
 discord.py
 httpx==0.27.2
 langchain
-langchain_community
+langchain_openai
+langchain_anthropic
 aiofiles
 python-dotenv
 boto3
