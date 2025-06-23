@@ -137,7 +137,8 @@ async def load_extensions():
         'cogs.file_manager',
         'cogs.github_integration',
         'cogs.admin',
-        'cogs.help_system'
+        'cogs.help_system',
+        'cogs.arxiv_integration'
     ]
 
     for cog in cogs:

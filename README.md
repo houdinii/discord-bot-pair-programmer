@@ -65,59 +65,59 @@ All commands use the `!` prefix. Most commands have multiple aliases for conveni
 
 ### 🤖 AI & Chat Commands
 
-| Command | Aliases | Description | Usage |
-|---------|---------|-------------|-------|
-| `!chat` | `c`, `ask`, `ai` | Chat with AI models with context | `!chat openai chatgpt-4o-latest How do I implement async?` |
-| `!quick` | `q`, `gpt`, `ask4` | Quick chat with default GPT-4 model | `!quick How do I use decorators?` |
-| `!models` | `model`, `list_models` | List available AI models | `!models` |
-| `!search` | `s`, `find`, `lookup` | Search conversation history | `!search authentication` |
-| `!context` | `ctx`, `preview` | Show context for a query | `!context recent conversations` |
-| `!autosave` | `as`, `auto` | Toggle auto-saving conversations | `!autosave` |
+| Command     | Aliases                | Description                         | Usage                                                      |
+|-------------|------------------------|-------------------------------------|------------------------------------------------------------|
+| `!chat`     | `c`, `ask`, `ai`       | Chat with AI models with context    | `!chat openai chatgpt-4o-latest How do I implement async?` |
+| `!quick`    | `q`, `gpt`, `ask4`     | Quick chat with default GPT-4 model | `!quick How do I use decorators?`                          |
+| `!models`   | `model`, `list_models` | List available AI models            | `!models`                                                  |
+| `!search`   | `s`, `find`, `lookup`  | Search conversation history         | `!search authentication`                                   |
+| `!context`  | `ctx`, `preview`       | Show context for a query            | `!context recent conversations`                            |
+| `!autosave` | `as`, `auto`           | Toggle auto-saving conversations    | `!autosave`                                                |
 
 ### 📄 Document Management
 
-| Command | Aliases | Description | Usage |
-|---------|---------|-------------|-------|
-| `!upload` | `up`, `add`, `attach` | Upload files with description | `!upload "API docs"` + attach file |
-| `!files` | `f`, `list`, `ls`, `docs` | List uploaded files | `!files` or `!files @user` |
-| `!askdoc` | `ad`, `question`, `qd` | Ask questions about documents | `!askdoc 123 What is the main idea?` |
-| `!fileinfo` | `fi`, `details` | Get file information | `!fileinfo 123` |
-| `!getfile` | `get`, `download` | Get download link | `!getfile 123` |
-| `!papers` | `p`, `documents`, `pdfs` | List documents with filters | `!papers pdf` |
-| `!deletefile` | `delete`, `rm` | Delete files (owner only) | `!deletefile 123` |
+| Command       | Aliases                   | Description                   | Usage                                |
+|---------------|---------------------------|-------------------------------|--------------------------------------|
+| `!upload`     | `up`, `add`, `attach`     | Upload files with description | `!upload "API docs"` + attach file   |
+| `!files`      | `f`, `list`, `ls`, `docs` | List uploaded files           | `!files` or `!files @user`           |
+| `!askdoc`     | `ad`, `question`, `qd`    | Ask questions about documents | `!askdoc 123 What is the main idea?` |
+| `!fileinfo`   | `fi`, `details`           | Get file information          | `!fileinfo 123`                      |
+| `!getfile`    | `get`, `download`         | Get download link             | `!getfile 123`                       |
+| `!papers`     | `p`, `documents`, `pdfs`  | List documents with filters   | `!papers pdf`                        |
+| `!deletefile` | `delete`, `rm`            | Delete files (owner only)     | `!deletefile 123`                    |
 
 ### 🧠 Memory System
 
-| Command | Aliases | Description | Usage |
-|---------|---------|-------------|-------|
-| `!remember` | `r`, `save`, `mem` | Save important context | `!remember auth_setup Using JWT for authentication` |
-| `!recall` | `rc`, `find_memory` | Search memories | `!recall authentication` |
-| `!get_memory` | `gm`, `memory` | Get specific memory by tag | `!get_memory auth_setup` |
-| `!list_memories` | `lm`, `memories` | List all memory tags | `!list_memories` |
-| `!forget` | `fg`, `delete_memory` | Delete memories | `!forget old_project` |
-| `!stats` | `st`, `statistics` | Show database statistics | `!stats` |
+| Command          | Aliases               | Description                | Usage                                               |
+|------------------|-----------------------|----------------------------|-----------------------------------------------------|
+| `!remember`      | `r`, `save`, `mem`    | Save important context     | `!remember auth_setup Using JWT for authentication` |
+| `!recall`        | `rc`, `find_memory`   | Search memories            | `!recall authentication`                            |
+| `!get_memory`    | `gm`, `memory`        | Get specific memory by tag | `!get_memory auth_setup`                            |
+| `!list_memories` | `lm`, `memories`      | List all memory tags       | `!list_memories`                                    |
+| `!forget`        | `fg`, `delete_memory` | Delete memories            | `!forget old_project`                               |
+| `!stats`         | `st`, `statistics`    | Show database statistics   | `!stats`                                            |
 
 ### 🐙 GitHub Integration
 
-| Command | Aliases | Description | Usage |
-|---------|---------|-------------|-------|
-| `!address` | `add_repo`, `track` | Track GitHub repository | `!address user/repo` |
-| `!repos` | `repositories`, `lr` | List tracked repositories | `!repos` |
-| `!repoinfo` | `repo`, `about` | Get repository information | `!repoinfo user/repo` |
-| `!issues` | `i`, `bugs` | List repository issues | `!issues user/repo` |
-| `!prs` | `pr`, `pulls` | List pull requests | `!prs user/repo` |
-| `!codesearch` | `cs`, `code`, `grep` | Search code in repository | `!codesearch user/repo function_name` |
-| `!createissue` | `ci`, `newissue` | Create new issue | `!createissue user/repo "Title" Description` |
-| `!removerepo` | `rr`, `untrack` | Stop tracking repository | `!removerepo user/repo` |
+| Command        | Aliases              | Description                | Usage                                        |
+|----------------|----------------------|----------------------------|----------------------------------------------|
+| `!address`     | `add_repo`, `track`  | Track GitHub repository    | `!address user/repo`                         |
+| `!repos`       | `repositories`, `lr` | List tracked repositories  | `!repos`                                     |
+| `!repoinfo`    | `repo`, `about`      | Get repository information | `!repoinfo user/repo`                        |
+| `!issues`      | `i`, `bugs`          | List repository issues     | `!issues user/repo`                          |
+| `!prs`         | `pr`, `pulls`        | List pull requests         | `!prs user/repo`                             |
+| `!codesearch`  | `cs`, `code`, `grep` | Search code in repository  | `!codesearch user/repo function_name`        |
+| `!createissue` | `ci`, `newissue`     | Create new issue           | `!createissue user/repo "Title" Description` |
+| `!removerepo`  | `rr`, `untrack`      | Stop tracking repository   | `!removerepo user/repo`                      |
 
 ### 📚 Help & Information
 
-| Command | Aliases | Description | Usage |
-|---------|---------|-------------|-------|
-| `!help` | `h`, `?`, `commands` | Show command help | `!help` or `!help ai` |
-| `!commands_table` | `ct`, `table` | Compact command table | `!commands_table` |
-| `!tips` | `tip`, `hints` | Show usage tips | `!tips` |
-| `!aliases` | `a`, `shortcuts` | Show command aliases | `!aliases` |
+| Command           | Aliases              | Description           | Usage                 |
+|-------------------|----------------------|-----------------------|-----------------------|
+| `!help`           | `h`, `?`, `commands` | Show command help     | `!help` or `!help ai` |
+| `!commands_table` | `ct`, `table`        | Compact command table | `!commands_table`     |
+| `!tips`           | `tip`, `hints`       | Show usage tips       | `!tips`               |
+| `!aliases`        | `a`, `shortcuts`     | Show command aliases  | `!aliases`            |
 
 ## 🎯 Usage Examples
 

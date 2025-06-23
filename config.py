@@ -87,3 +87,9 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # GitHub personal access token
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')  # AWS access key ID
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')  # AWS secret access key
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')  # S3 bucket name for file storage
+
+# =============================================================================
+# Arxiv Configuration
+# =============================================================================
+
+ARXIV_SUGGESTION_CHANNEL = os.getenv('ARXIV_SUGGESTION_CHANNEL')

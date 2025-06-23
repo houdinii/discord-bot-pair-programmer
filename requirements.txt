@@ -14,3 +14,6 @@ python-magic
 tiktoken
 pymysql
 cryptography
+fitz
+PyMuPDF
+arxiv
