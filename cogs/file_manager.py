@@ -337,7 +337,7 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='fileinfo', aliases=['fi', 'info', 'details'])
+    @commands.command(name='fileinfo', aliases=['fi', 'details'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def file_info(self, ctx, file_id: int):
         """

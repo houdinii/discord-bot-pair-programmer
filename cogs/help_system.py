@@ -188,7 +188,7 @@ DOCUMENT COMMANDS                ALIASES
 !files [@user]                   f, list, ls, docs
 !searchfiles [query]             sf, searchdocs, fd
 !askdoc [id] [question]          ad, question, qd
-!fileinfo [id]                   fi, info, details
+!fileinfo [id]                   fi, details
 !getfile [id]                    get, download, dl
 !papers [all/pdf/recent]         p, documents, pdfs
 !deletefile [id]                 delete, rm, remove
