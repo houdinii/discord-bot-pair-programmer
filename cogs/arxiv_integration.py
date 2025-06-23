@@ -27,7 +27,8 @@ class ArxivCog(commands.Cog):
         )
 
         # Start suggestion task if channel is configured
-        if hasattr('ARXIV_SUGGESTION_CHANNEL') and ARXIV_SUGGESTION_CHANNEL:
+        # Check if ARXIV_SUGGESTION_CHANNEL exists and is not None/empty
+        if ARXIV_SUGGESTION_CHANNEL:
             self.daily_suggestions.start()
 
     def cog_unload(self):
@@ -817,7 +818,7 @@ class ArxivCog(commands.Cog):
     async def daily_suggestions(self):
         """Send personalized daily paper suggestions based on context"""
         try:
-            if not hasattr('ARXIV_SUGGESTION_CHANNEL') or not ARXIV_SUGGESTION_CHANNEL:
+            if not ARXIV_SUGGESTION_CHANNEL:
                 return
 
             channel = self.bot.get_channel(int(ARXIV_SUGGESTION_CHANNEL))
@@ -1159,7 +1160,7 @@ class ArxivCog(commands.Cog):
     async def weekly_research_summary(self):
         """Send weekly research summary and recommendations"""
         try:
-            if not hasattr('ARXIV_SUGGESTION_CHANNEL') or not ARXIV_SUGGESTION_CHANNEL:
+            if not ARXIV_SUGGESTION_CHANNEL:
                 return
 
             channel = self.bot.get_channel(int(ARXIV_SUGGESTION_CHANNEL))
