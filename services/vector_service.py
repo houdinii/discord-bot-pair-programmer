@@ -1,4 +1,30 @@
-# services/vector_service.py
+"""
+Vector Database Service for PairProgrammer Discord Bot
+
+This service provides comprehensive vector database operations using Pinecone for
+semantic search, conversation memory, document storage, and GitHub content indexing.
+It handles embedding generation, storage, retrieval, and context building for AI
+interactions.
+
+The service uses OpenAI embeddings and Pinecone vector database with channel-based
+namespacing for data isolation and improved search relevance.
+
+Key Features:
+    - Conversation history storage and retrieval
+    - Document chunking and semantic search
+    - Memory system with tagged storage
+    - GitHub repository content indexing
+    - Context-aware AI conversation support
+    - Multi-channel data isolation via namespaces
+
+Data Types:
+    - conversation: User-AI chat interactions
+    - memory: Tagged important information
+    - document: File uploads and content
+    - github: Repository data (code, READMEs, structure)
+
+Author: PairProgrammer Team
+"""
 
 import os
 import hashlib
@@ -35,19 +61,101 @@ embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 
 def gen_id(text: str, user: str, ts: str) -> str:
-    """Generate a stable unique ID for each record."""
-    # noinspection PyTypeChecker
+    """
+    Generate a stable unique ID for vector database records.
+    
+    Creates a deterministic MD5 hash-based ID using user, timestamp, and
+    text content. This ensures consistent IDs for the same content and
+    prevents duplicate entries.
+    
+    Args:
+        text (str): The content text (first 50 chars used for ID)
+        user (str): User identifier (user_id or repo name)
+        ts (str): Timestamp string for uniqueness
+        
+    Returns:
+        str: MD5 hash hexadecimal string (32 characters)
+        
+    Example:
+        vector_id = gen_id("Hello world", "user123", "2024-01-01T12:00:00Z")
+        # Returns: "a1b2c3d4e5f6..."
+    """
     return hashlib.md5(f"{user}_{ts}_{text[:50]}".encode()).hexdigest()
 
 
 class VectorService:
+    """
+    Service class for vector database operations and semantic search.
+    
+    This class provides a comprehensive interface for storing and retrieving
+    various types of content in a Pinecone vector database, with support for
+    semantic search, conversation memory, and context building for AI interactions.
+    
+    Attributes:
+        embeddings (OpenAIEmbeddings): OpenAI embedding model for vectorization
+        index_name (str): Pinecone index name for vector storage
+        
+    Architecture:
+        - Uses OpenAI text-embedding-3-small for vectorization
+        - Pinecone serverless index with cosine similarity
+        - Channel-based namespacing for data isolation
+        - Automatic index creation if not exists
+        
+    Example:
+        vector_service = VectorService()
+        
+        # Store conversation
+        vector_id = await vector_service.store_conversation(
+            user_id="123", channel_id="456",
+            message="How do I use async?", response="Use async/await...",
+            ai_model="openai:gpt-4"
+        )
+        
+        # Search for context
+        context = await vector_service.get_context_for_ai(
+            query="async programming", channel_id="456"
+        )
+    """
+    
     def __init__(self):
+        """
+        Initialize the VectorService with Pinecone configuration.
+        
+        Sets up the embedding model and connects to the Pinecone index.
+        Creates the index if it doesn't exist.
+        
+        Environment Variables Required:
+            PINECONE_API_KEY: Pinecone API key
+            PINECONE_INDEX_NAME: Pinecone index name (optional)
+            OPENAI_API_KEY: OpenAI API key for embeddings
+            
+        Raises:
+            ValueError: If required environment variables are missing
+            ConnectionError: If Pinecone connection fails
+        """
         self.embeddings = embeddings
         self.index_name = INDEX_NAME
         logger.logger.info("VectorService initialized with Pinecone")
 
     def _get_vector_store(self, namespace: str = None):
-        """Get a vector store with optional namespace"""
+        """
+        Get a PineconeVectorStore instance with optional namespace.
+        
+        Creates a vector store instance for performing operations within
+        a specific namespace. Namespaces provide data isolation between
+        different Discord channels.
+        
+        Args:
+            namespace (str, optional): Namespace for data isolation.
+                                     Typically the Discord channel ID.
+                                     
+        Returns:
+            PineconeVectorStore: Configured vector store instance
+            
+        Note:
+            Namespaces allow multiple Discord channels to store data
+            in the same index while maintaining complete separation.
+        """
         return PineconeVectorStore(
             index_name=self.index_name,
             embedding=self.embeddings,
@@ -58,7 +166,36 @@ class VectorService:
     async def store_conversation(self, user_id: str, channel_id: str,
                                  message: str, response: str,
                                  ai_model: str) -> str:
-        """Store a conversation in the vector database"""
+        """
+        Store a user-AI conversation in the vector database.
+        
+        Stores both the user message and AI response as a combined document
+        for later retrieval and context building. The conversation is stored
+        in the channel's namespace for isolation.
+        
+        Args:
+            user_id (str): Discord user ID who sent the message
+            channel_id (str): Discord channel ID (used as namespace)
+            message (str): Original user message/question
+            response (str): AI model's response
+            ai_model (str): AI model identifier (e.g., "openai:gpt-4")
+            
+        Returns:
+            str: Vector ID of the stored conversation
+            
+        Storage Format:
+            Content: "User: {message}\nAssistant: {response}"
+            Metadata: user_id, channel_id, ai_model, timestamp, type=conversation
+            
+        Example:
+            vector_id = await vector_service.store_conversation(
+                user_id="123456789",
+                channel_id="987654321", 
+                message="How do I implement binary search?",
+                response="Binary search is an algorithm...",
+                ai_model="openai:chatgpt-4o-latest"
+            )
+        """
         logger.log_data('IN', 'STORE_CONVERSATION', {
             'user_id': user_id,
             'channel_id': channel_id,
@@ -407,7 +544,53 @@ class VectorService:
                              user_id: str = None,
                              content_type: List[str] = None,
                              top_k: int = 5) -> List[Dict]:
-        """Search for similar content in the vector database"""
+        """
+        Search for semantically similar content in the vector database.
+        
+        Performs semantic search using the query text to find the most relevant
+        stored content across conversations, memories, documents, and GitHub data.
+        Results are filtered by channel namespace and optional content type.
+        
+        Args:
+            query (str): Search query text for semantic matching
+            channel_id (str, optional): Discord channel ID for namespace filtering.
+                                       If None, searches across all channels.
+            user_id (str, optional): Filter results by specific user ID
+            content_type (List[str], optional): Filter by content types
+                                              ['conversation', 'memory', 'document', 'github']
+            top_k (int): Maximum number of results to return. Default: 5
+            
+        Returns:
+            List[Dict]: List of search results with structure:
+                {
+                    'id': str,           # Vector ID
+                    'score': float,      # Similarity score (0-1, higher is better)
+                    'metadata': dict,    # Original metadata
+                    'content': str       # Original content
+                }
+                
+        Filtering:
+            - Channel namespace isolation (automatic)
+            - User-specific results (optional)
+            - Content type filtering (optional)
+            - Similarity score ranking
+            
+        Example:
+            # Search all content types
+            results = await vector_service.search_similar(
+                query="authentication JWT",
+                channel_id="123456789",
+                top_k=10
+            )
+            
+            # Search only memories
+            memory_results = await vector_service.search_similar(
+                query="project setup",
+                channel_id="123456789",
+                content_type=["memory"],
+                top_k=5
+            )
+        """
         logger.log_data('IN', 'VECTOR_SEARCH', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
@@ -459,7 +642,61 @@ class VectorService:
     async def get_context_for_ai(self, query: str,
                                  channel_id: str,
                                  max_context_length: int = 3000) -> str:
-        """Get relevant context for AI response including documents"""
+        """
+        Build contextual information for AI responses using semantic search.
+        
+        This is the primary method for retrieving relevant context from stored
+        conversations, memories, documents, and GitHub content to enhance AI
+        responses with historical information and channel-specific knowledge.
+        
+        Args:
+            query (str): User's current query for context relevance matching
+            channel_id (str): Discord channel ID for namespace isolation
+            max_context_length (int): Maximum character length for context.
+                                    Default: 3000 characters
+                                    
+        Returns:
+            str: Formatted context string ready for AI system message.
+                 Contains relevant excerpts from conversations, memories,
+                 documents, and GitHub content, separated by dividers.
+                 
+        Context Building Process:
+            1. Search conversations, memories, documents, GitHub content
+            2. Deduplicate and rank by relevance score
+            3. Format each piece with type indicators
+            4. Limit document chunks per file to avoid dominance
+            5. Respect character limit while maximizing information
+            
+        Context Format:
+            ```
+            [Previous conversation - timestamp]
+            User: question
+            Assistant: response
+            
+            ---
+            
+            [Saved Memory - tag]
+            content
+            
+            ---
+            
+            [Document: filename - Part 1/3]
+            document content...
+            ```
+            
+        Example:
+            context = await vector_service.get_context_for_ai(
+                query="How do I implement JWT authentication?",
+                channel_id="123456789",
+                max_context_length=4000
+            )
+            
+            # Context might include:
+            # - Previous auth discussions
+            # - Saved JWT setup memories  
+            # - Relevant documentation chunks
+            # - GitHub code examples
+        """
         logger.log_data('IN', 'GET_AI_CONTEXT', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
