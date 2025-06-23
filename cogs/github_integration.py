@@ -1,4 +1,42 @@
-# cogs/github_integration.py
+"""
+GitHub Integration Cog for PairProgrammer Discord Bot
+
+This cog provides comprehensive GitHub repository integration including repository
+tracking, code search, issue management, and content indexing. It enables teams
+to monitor repositories, search code, and interact with GitHub data directly
+from Discord.
+
+Key Features:
+    - Repository tracking per Discord channel
+    - Intelligent code and documentation indexing
+    - Issue and pull request management
+    - Code search across tracked repositories
+    - Repository analysis and language detection
+    - Automatic content vectorization for AI context
+
+Commands:
+    - !address: Add/track GitHub repositories
+    - !repos: List tracked repositories
+    - !repoinfo: Get repository details and statistics
+    - !issues: List and filter repository issues
+    - !prs: List and filter pull requests
+    - !codesearch: Search code across repositories
+    - !createissue: Create new GitHub issues
+    - !removerepo: Remove repository tracking
+
+Integration:
+    - GitHubService: GitHub API operations and content analysis
+    - VectorService: Code and documentation indexing
+    - Database: Repository tracking and metadata storage
+
+Security:
+    - GitHub token authentication
+    - Repository access validation
+    - User permission checking
+
+Author: PairProgrammer Team
+"""
+
 from datetime import datetime, UTC
 
 import discord
@@ -15,7 +53,53 @@ logger = get_logger(__name__)
 
 
 class GitHubCog(commands.Cog):
+    """
+    Discord cog for GitHub repository integration and management.
+    
+    This cog enables Discord servers to track and interact with GitHub
+    repositories, providing code search, issue management, and repository
+    analysis capabilities. Each Discord channel can track multiple repositories
+    independently.
+    
+    Attributes:
+        bot (commands.Bot): Discord bot instance
+        github (GitHub): PyGithub client for API access
+        github_service (GitHubService): Custom GitHub service for content analysis
+        vector_service (VectorService): Vector database for code indexing
+        
+    Repository Tracking:
+        - Per-channel repository lists
+        - Automatic content indexing
+        - Language and technology detection
+        - File structure analysis
+        
+    Content Indexing:
+        - Selective file inclusion based on relevance
+        - Code structure preservation
+        - Documentation integration
+        - Vector database storage for semantic search
+        
+    Example Usage:
+        !address microsoft/vscode
+        !codesearch vscode editor.action
+        !issues vscode bug
+    """
+    
     def __init__(self, bot):
+        """
+        Initialize the GitHubCog with required services.
+        
+        Args:
+            bot (commands.Bot): Discord bot instance
+            
+        Services Initialized:
+            - Github: PyGithub client for GitHub API access
+            - GitHubService: Custom service for repository analysis
+            - VectorService: Vector database for content indexing
+            
+        Environment Variables Required:
+            GITHUB_TOKEN: GitHub personal access token
+        """
         self.bot = bot
         self.github = Github(GITHUB_TOKEN)
         self.github_service = GitHubService(GITHUB_TOKEN)
@@ -25,9 +109,45 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def add_repository(self, ctx, repo_url: str):
         """
-        Add a GitHub repository to track in this channel
-        Usage: !address https://github.com/user/repo
-        Usage: !address user/repo
+        Add a GitHub repository to track and index in this Discord channel.
+        
+        This command adds a GitHub repository to the channel's tracking list,
+        downloads and indexes its contents for AI context, and stores metadata
+        in the database. The repository content is made searchable through
+        vector database indexing.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_url (str): GitHub repository URL or owner/repo format
+            
+        URL Formats Supported:
+            - Full URL: https://github.com/microsoft/vscode
+            - Short format: microsoft/vscode
+            
+        Process:
+            1. Validates repository exists and is accessible
+            2. Stores repository metadata in database
+            3. Indexes repository overview (README, description)
+            4. Analyzes and indexes code files selectively
+            5. Creates searchable vector database entries
+            
+        Features:
+            - Automatic content analysis and language detection
+            - Intelligent file selection (excludes binaries, large files)
+            - Structured indexing preserving code organization
+            - Repository statistics and language breakdown
+            
+        Limitations:
+            - Maximum 50 files indexed per repository
+            - Requires public repository or valid GitHub token access
+            - Large repositories may take several minutes to index
+            
+        Example:
+            !address microsoft/vscode
+            !address https://github.com/python/cpython
+            
+        Aliases: add_repo, track, watch
+        Cooldown: 3 uses per 60 seconds per user
         """
         # Parse repository name from URL
         if repo_url.startswith('https://github.com/'):
@@ -171,9 +291,42 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
         """
-        List issues from a tracked repository
-        Usage: !issues user/repo
-        Usage: !issues user/repo closed
+        List and display issues from a tracked GitHub repository.
+        
+        Retrieves and displays repository issues with filtering by state.
+        Shows issue details including title, author, labels, and direct links
+        to GitHub for further interaction.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format
+            state (str, optional): Issue state filter. Defaults to 'open'
+            
+        Issue States:
+            - 'open': Currently open issues (default)
+            - 'closed': Resolved/closed issues
+            - 'all': Both open and closed issues
+            
+        Display Information:
+            - Issue number and title (truncated if too long)
+            - Issue author/creator
+            - Associated labels and tags
+            - Direct link to view on GitHub
+            
+        Security:
+            - Only works with repositories tracked in the current channel
+            - Requires repository to be added via !address command first
+            
+        Limitations:
+            - Shows maximum 10 most recent issues
+            - Requires repository to be publicly accessible or token access
+            
+        Example:
+            !issues microsoft/vscode
+            !issues python/cpython closed
+            
+        Aliases: i, bugs, issue
+        Cooldown: 3 uses per 60 seconds per user
         """
         try:
             # Verify repo is tracked
@@ -227,9 +380,46 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
         """
-        List pull requests from a tracked repository
-        Usage: !prs user/repo
-        Usage: !prs user/repo closed
+        List and display pull requests from a tracked GitHub repository.
+        
+        Retrieves and displays repository pull requests with filtering by state.
+        Shows PR details including title, author, branch information, and direct
+        links to GitHub for code review and interaction.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format
+            state (str, optional): PR state filter. Defaults to 'open'
+            
+        PR States:
+            - 'open': Currently open pull requests (default)
+            - 'closed': Merged or closed pull requests
+            - 'all': Both open and closed pull requests
+            
+        Display Information:
+            - PR number and title (truncated if necessary)
+            - PR author/creator
+            - Source and target branch information
+            - Direct link to view/review on GitHub
+            
+        Branch Display:
+            Shows branch flow as: source_branch → target_branch
+            Example: feature/auth → main
+            
+        Security:
+            - Only works with repositories tracked in the current channel
+            - Requires repository to be added via !address command first
+            
+        Limitations:
+            - Shows maximum 10 most recent pull requests
+            - Requires repository to be publicly accessible or token access
+            
+        Example:
+            !prs microsoft/vscode
+            !prs react/react closed
+            
+        Aliases: pr, pulls, pullrequests
+        Cooldown: 3 uses per 60 seconds per user
         """
         try:
             # Verify repo is tracked
@@ -280,8 +470,43 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def repository_info(self, ctx, repo_name: str = None):
         """
-        Get detailed information about a tracked repository
-        Usage: !repoinfo user/repo
+        Display comprehensive information about a tracked GitHub repository.
+        
+        Provides detailed repository statistics, metadata, and activity information
+        including stars, forks, issues, recent commits, and project description.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format
+            
+        Repository Information Displayed:
+            - Repository name, description, and primary language
+            - GitHub statistics (stars, forks, open issues)
+            - Open pull requests count
+            - Default branch information
+            - Recent commit activity with authors
+            - Direct link to repository on GitHub
+            
+        Recent Commits:
+            - Shows last 3 commits with messages and authors
+            - Commit messages are truncated for readability
+            - Includes commit author information
+            
+        Security:
+            - Only works with repositories tracked in the current channel
+            - Requires repository to be added via !address command first
+            
+        Error Handling:
+            - Gracefully handles API rate limits
+            - Shows "N/A" for unavailable information
+            - Continues to show available data even if some info fails
+            
+        Example:
+            !repoinfo microsoft/typescript
+            !repoinfo facebook/react
+            
+        Aliases: repo, about
+        Cooldown: 3 uses per 60 seconds per user
         """
         if not repo_name:
             await ctx.send("❌ Please specify a repository name")
@@ -347,7 +572,46 @@ class GitHubCog(commands.Cog):
     @commands.command(name='repos', aliases=['repositories', 'list_repos', 'lr'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_repositories(self, ctx):
-        """List all tracked repositories in this channel"""
+        """
+        List all GitHub repositories currently tracked in this Discord channel.
+        
+        Displays a comprehensive list of all repositories that have been added
+        to this channel for tracking and indexing. Shows repository names,
+        GitHub URLs, and the date each repository was added.
+        
+        Display Information:
+            - Repository name in owner/repo format
+            - Direct link to repository on GitHub
+            - Date when repository was added to tracking
+            - Total count of tracked repositories
+            
+        Channel Isolation:
+            - Only shows repositories added to the current Discord channel
+            - Each channel maintains its own separate repository list
+            - No cross-channel repository visibility
+            
+        Usage:
+            Useful for seeing what repositories are available for:
+            - Code search (!codesearch)
+            - Issue tracking (!issues, !prs)
+            - Repository information (!repoinfo)
+            
+        Empty State:
+            If no repositories are tracked, provides guidance on how to
+            add repositories using the !address command.
+            
+        Example Output:
+            Tracked Repositories:
+            • microsoft/vscode - Added: 2024-01-15
+            • python/cpython - Added: 2024-01-14
+            • facebook/react - Added: 2024-01-13
+            
+        Example:
+            !repos
+            
+        Aliases: repositories, list_repos, lr
+        Cooldown: 3 uses per 60 seconds per user
+        """
         db = get_db()
         try:
             # FIX: is_active comparison was wrong
@@ -378,6 +642,8 @@ class GitHubCog(commands.Cog):
         finally:
             db.close()
 
+    # Duplicate method - this appears to be a copy/paste error in the original file
+    # Keeping it as-is but noting it should be cleaned up
     @commands.command(name='issues', aliases=['i', 'bugs', 'issue'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
@@ -432,8 +698,53 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def create_issue(self, ctx, repo_name: str, title: str, *, body: str = ""):
         """
-        Create a new issue in a tracked repository
-        Usage: !createissue user/repo "Bug in authentication" This is the issue description
+        Create a new GitHub issue in a tracked repository from Discord.
+        
+        Allows users to create GitHub issues directly from Discord with
+        automatic attribution and context. The created issue includes
+        information about its Discord origin for traceability.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format
+            title (str): Issue title (should be quoted if contains spaces)
+            body (str, optional): Issue description/body text
+            
+        Issue Creation:
+            - Creates issue with provided title and description
+            - Automatically adds Discord attribution footer
+            - Returns issue number and direct GitHub link
+            - Issue is immediately visible on GitHub
+            
+        Attribution:
+            Issues created through Discord include a footer:
+            "---\n*Created from Discord by {username}*"
+            
+        Security:
+            - Only works with repositories tracked in the current channel
+            - Requires GitHub token with repository write permissions
+            - User must have repository access through GitHub
+            
+        Command Format:
+            For titles with spaces, use quotes:
+            !createissue user/repo "Bug in login system" Description here
+            
+            For single-word titles:
+            !createissue user/repo BugReport This is the description
+            
+        Response:
+            Shows created issue with:
+            - Issue number and title
+            - Repository name
+            - Direct link to view/edit on GitHub
+            - Confirmation of successful creation
+            
+        Example:
+            !createissue microsoft/vscode "Editor freezes on large files" 
+            When opening files over 10MB, the editor becomes unresponsive.
+            
+        Aliases: ci, newissue, issue_new
+        Cooldown: 3 uses per 60 seconds per user
         """
         try:
             # Verify repo is tracked
@@ -478,9 +789,10 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
         """
-        List pull requests from a tracked repository
-        Usage: !prs user/repo
-        Usage: !prs user/repo closed
+        List and display pull requests from a tracked GitHub repository (duplicate method).
+        
+        Note: This appears to be a duplicate of the earlier list_pull_requests method.
+        This duplicate should be cleaned up in the codebase.
         """
         try:
             # Verify repo is tracked
@@ -527,8 +839,45 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def remove_repository(self, ctx, repo_name: str):
         """
-        Remove a repository from tracking
-        Usage: !removerepo user/repo
+        Remove a GitHub repository from channel tracking and indexing.
+        
+        Stops tracking a repository in the current Discord channel and removes
+        it from the database. This action cannot be undone and will require
+        re-adding the repository to restore tracking.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format to remove
+            
+        Permission Requirements:
+            - User must be the one who originally added the repository, OR
+            - User must have Discord server administrator permissions
+            
+        Effects of Removal:
+            - Repository is removed from channel's tracking list
+            - No longer appears in !repos command output
+            - Cannot be used with !issues, !prs, !repoinfo commands
+            - Vector database entries remain but are no longer searchable
+            
+        Security:
+            - Only works on repositories tracked in the current channel
+            - Permission check prevents unauthorized removal
+            - Shows clear error message if permission denied
+            
+        Data Retention:
+            Note: Vector database content is not automatically cleaned up
+            and may still appear in search results until manually purged.
+            
+        Confirmation:
+            No confirmation prompt - removal is immediate upon command execution.
+            Use with caution as the action cannot be undone.
+            
+        Example:
+            !removerepo microsoft/vscode
+            !untrack python/cpython
+            
+        Aliases: rr, untrack, unwatch
+        Cooldown: 3 uses per 60 seconds per user
         """
         db = get_db()
         try:
@@ -552,11 +901,52 @@ class GitHubCog(commands.Cog):
         finally:
             db.close()
 
-    # Debug command to help diagnose issues
     @commands.command(name='debugrepo', aliases=['dr', 'debug_repo', 'checkrepo'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def debug_repo(self, ctx, repo_name: str = None):
-        """Debug repository tracking issues"""
+        """
+        Debug repository tracking and database issues for troubleshooting.
+        
+        Provides detailed information about repository tracking status,
+        database entries, and configuration to help diagnose issues with
+        repository commands or indexing problems.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str, optional): Specific repository to debug
+            
+        Debug Information Displayed:
+            - Current Discord channel ID
+            - Total repositories tracked in channel
+            - Repository tracking status and metadata
+            - Database entry details (ID, active status, added by)
+            - Repository URLs and configuration
+            
+        Specific Repository Debug:
+            When repo_name is provided, shows:
+            - All database entries for that repository across channels
+            - Active/inactive status for each entry
+            - User who added each instance
+            - Cross-channel repository tracking status
+            
+        Use Cases:
+            - Repository commands not working
+            - Missing repositories from !repos list
+            - Permission errors on repository operations
+            - Database inconsistencies
+            
+        Security:
+            - Shows database IDs and internal configuration
+            - Reveals who added each repository
+            - Use with caution in public channels
+            
+        Example:
+            !debugrepo
+            !dr microsoft/vscode
+            
+        Aliases: dr, debug_repo, checkrepo
+        Cooldown: 3 uses per 60 seconds per user
+        """
         db = get_db()
         try:
             # Get all repos for this channel regardless of is_active
@@ -603,7 +993,38 @@ class GitHubCog(commands.Cog):
     @commands.command(name='namespace_info', aliases=['ns', 'namespace', 'nsinfo'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def namespace_info(self, ctx):
-        """Show vector database namespace information"""
+        """
+        Display vector database namespace information for the current channel.
+        
+        Shows information about the vector database namespace associated with
+        this Discord channel, including storage and indexing details.
+        
+        Vector Database Namespaces:
+            - Each Discord channel has its own vector database namespace
+            - Namespaces isolate data between different channels
+            - Channel ID is used as the namespace identifier
+            
+        Information Displayed:
+            - Channel ID (used as namespace identifier)
+            - Reference to use !stats for detailed vector counts
+            - Namespace isolation confirmation
+            
+        Technical Details:
+            - Vector databases use channel ID for data partitioning
+            - Ensures cross-channel data privacy
+            - Enables per-channel repository and conversation tracking
+            
+        Related Commands:
+            - !stats: Shows detailed vector database statistics
+            - !repos: Shows repositories indexed in this namespace
+            
+        Example:
+            !namespace_info
+            !ns
+            
+        Aliases: ns, namespace, nsinfo
+        Cooldown: 3 uses per 60 seconds per user
+        """
         channel_id = str(ctx.channel.id)
 
         # Get stats for this namespace
@@ -628,8 +1049,58 @@ class GitHubCog(commands.Cog):
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def search_code(self, ctx, repo_name: str, *, query: str):
         """
-        Search for code in a tracked repository
-        Usage: !codesearch user/repo function_name
+        Search for code patterns and content within a tracked repository.
+        
+        Performs semantic search across indexed code files and repository
+        structure using vector database similarity matching. Returns relevant
+        code snippets with context and file locations.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            repo_name (str): Repository name in owner/repo format
+            query (str): Search query (function names, keywords, concepts)
+            
+        Search Capabilities:
+            - Semantic search using AI embeddings
+            - Code structure and pattern matching
+            - Cross-file content search
+            - Documentation and comment search
+            
+        Search Types:
+            - Function names and definitions
+            - Class names and methods
+            - Variable and constant names
+            - Code patterns and algorithms
+            - Comments and documentation
+            
+        Result Display:
+            - File path and name
+            - Relevance score (0.0 to 1.0)
+            - Code snippet with syntax highlighting
+            - Context around matching content
+            
+        Content Types Searched:
+            - Code files (Python, JavaScript, etc.)
+            - Repository structure and organization
+            - Documentation files
+            - Configuration files
+            
+        Security:
+            - Only searches repositories tracked in current channel
+            - Requires repository to be indexed via !address command
+            
+        Limitations:
+            - Shows maximum 3 most relevant results
+            - Results limited to previously indexed content
+            - Search quality depends on indexing completeness
+            
+        Example Queries:
+            !codesearch microsoft/vscode "editor.action"
+            !cs react/react useState hook
+            !searchcode python/cpython async def
+            
+        Aliases: cs, code, searchcode, grep
+        Cooldown: 3 uses per 60 seconds per user
         """
         # Verify repo is tracked
         db = get_db()
@@ -704,4 +1175,13 @@ class GitHubCog(commands.Cog):
 
 
 async def setup(bot):
+    """
+    Set up the GitHubCog for the Discord bot.
+    
+    This function is called by the Discord.py framework to initialize
+    and register the GitHubCog with the bot instance.
+    
+    Args:
+        bot (commands.Bot): The Discord bot instance
+    """
     await bot.add_cog(GitHubCog(bot))

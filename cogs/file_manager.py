@@ -1,4 +1,43 @@
-# cogs/file_manager.py
+"""
+File Manager Cog for PairProgrammer Discord Bot
+
+This cog provides comprehensive file management capabilities including upload,
+storage, indexing, search, and analysis of various file types. It integrates
+with AWS S3 for storage and vector databases for semantic search across
+file contents.
+
+Key Features:
+    - Multi-format file upload and storage
+    - Text extraction from PDF, code, and document files
+    - Semantic search across file contents
+    - File metadata management and tracking
+    - Vector database indexing for AI context
+    - File download and sharing capabilities
+    - User-based file organization and permissions
+
+Supported File Types:
+    - Documents: PDF, TXT, MD
+    - Code: PY, JS, JSON, YML, YAML
+    - Data: CSV, LOG
+    - Max size: 25MB (Discord attachment limit)
+
+Commands:
+    - !upload: Upload and index files with descriptions
+    - !files: List uploaded files with filtering
+    - !searchfiles: Semantic search across file contents
+    - !fileinfo: Get detailed file information
+    - !getfile: Generate download links
+    - !papers: List document files with filters
+    - !deletefile: Delete files (owner only)
+
+Integration:
+    - S3Service: AWS S3 file storage and management
+    - VectorService: Content indexing and semantic search
+    - Database: File metadata and user tracking
+
+Author: PairProgrammer Team
+"""
+
 import discord
 from discord.ext import commands
 from services.s3_service import S3Service
@@ -18,12 +57,55 @@ logger = get_logger(__name__)
 
 
 class FileManagerCog(commands.Cog):
+    """
+    Discord cog for comprehensive file management and document processing.
+    
+    This cog handles the complete lifecycle of file management within the bot,
+    from upload and storage to indexing and retrieval. It supports multiple
+    file formats and provides semantic search capabilities across content.
+    
+    Attributes:
+        bot (commands.Bot): Discord bot instance
+        s3_service (S3Service): AWS S3 integration for file storage
+        vector_service (VectorService): Vector database for content indexing
+        text_extractors (dict): Mapping of file extensions to extraction methods
+        
+    File Processing Pipeline:
+        1. Upload: Receive Discord attachment
+        2. Validate: Check file type and size
+        3. Store: Upload to S3 with unique naming
+        4. Extract: Extract text content based on file type
+        5. Index: Chunk and store content in vector database
+        6. Metadata: Save file information to SQL database
+        
+    Security Features:
+        - User-based file isolation
+        - File type validation
+        - Size limits (Discord 25MB max)
+        - Owner-only deletion permissions
+        
+    Example Usage:
+        !upload "API documentation for user service"
+        !searchfiles authentication JWT
+        !fileinfo 123
+    """
+    
     def __init__(self, bot):
+        """
+        Initialize the FileManagerCog with required services.
+        
+        Args:
+            bot (commands.Bot): Discord bot instance
+            
+        Services Initialized:
+            - S3Service: For file storage and retrieval
+            - VectorService: For content indexing and search
+        """
         self.bot = bot
         self.s3_service = S3Service()
         self.vector_service = VectorService()
 
-        # Supported file types for text extraction
+        # Mapping of file extensions to text extraction methods
         self.text_extractors = {
             '.pdf': self._extract_pdf_text,
             '.txt': self._extract_text_file,
@@ -38,7 +120,30 @@ class FileManagerCog(commands.Cog):
         }
 
     async def _extract_file_content(self, file_path: str, filename: str) -> Optional[str]:
-        """Extract text content from various file types"""
+        """
+        Extract text content from files based on their type.
+        
+        Uses appropriate extraction method based on file extension to convert
+        files into searchable text content for vector database indexing.
+        
+        Args:
+            file_path (str): Local path to the file
+            filename (str): Original filename for extension detection
+            
+        Returns:
+            Optional[str]: Extracted text content, or None if extraction failed
+            
+        Supported Formats:
+            - PDF: Uses PyPDF2 for text extraction
+            - Text files: Direct UTF-8 reading with encoding fallback
+            - Code files: Treated as text files
+            - Configuration: JSON, YAML, etc. as text
+            
+        Error Handling:
+            - Logs extraction errors but doesn't raise exceptions
+            - Returns None for unsupported file types
+            - Handles encoding issues with fallback
+        """
         ext = os.path.splitext(filename)[1].lower()
 
         if ext in self.text_extractors:
@@ -325,7 +430,7 @@ class FileManagerCog(commands.Cog):
         )
 
         for file_id, result in sorted(file_results.items(), key=lambda x: x[1]['score'], reverse=True)[:5]:
-            file_meta = file_dict.get(int(file_id))
+            file_meta = file_dict.get(file_id)
             if file_meta:
                 embed.add_field(
                     name=f"{result['filename']} (ID: {file_id}, Score: {result['score']:.2f})",
@@ -356,7 +461,7 @@ class FileManagerCog(commands.Cog):
 
         # Get vector database info
         search_results = await self.vector_service.search_similar(
-            query=file_metadata.filename,
+            query=str(file_metadata.filename),
             channel_id=str(ctx.channel.id),
             content_type=['document'],
             top_k=50
@@ -380,7 +485,7 @@ class FileManagerCog(commands.Cog):
         embed.add_field(name="Description", value=file_metadata.description, inline=False)
 
         # Add download button
-        download_url = self.s3_service.generate_presigned_url(file_metadata.s3_key)
+        download_url = self.s3_service.generate_presigned_url(str(file_metadata.s3_key))
         if download_url:
             embed.add_field(
                 name="Download",
@@ -408,7 +513,7 @@ class FileManagerCog(commands.Cog):
             return
 
         # Generate presigned URL
-        download_url = self.s3_service.generate_presigned_url(file_metadata.s3_key)
+        download_url = self.s3_service.generate_presigned_url(str(file_metadata.s3_key))
 
         if not download_url:
             await ctx.send("❌ Failed to generate download link")
@@ -443,7 +548,7 @@ class FileManagerCog(commands.Cog):
             return
 
         # Delete from S3
-        success = await self.s3_service.delete_file(file_metadata.s3_key)
+        success = await self.s3_service.delete_file(str(file_metadata.s3_key))
 
         if success:
             # Delete from vector database
@@ -529,9 +634,9 @@ class FileManagerCog(commands.Cog):
         try:
             # Download file from S3
             temp_dir = tempfile.gettempdir()
-            temp_file_path = os.path.join(temp_dir, file_metadata.filename)
+            temp_file_path = os.path.join(str(temp_dir), str(file_metadata.filename))
 
-            success = await self.s3_service.download_file(file_metadata.s3_key, temp_file_path)
+            success = await self.s3_service.download_file(str(file_metadata.s3_key), str(temp_file_path))
 
             if not success:
                 await status_msg.edit(content="❌ Failed to download file from storage")
@@ -544,16 +649,16 @@ class FileManagerCog(commands.Cog):
             )
 
             # Extract and re-index content
-            content = await self._extract_file_content(temp_file_path, file_metadata.filename)
+            content = await self._extract_file_content(str(temp_file_path), str(file_metadata.filename))
 
             if content:
                 vector_ids = await self._index_file_content(
                     file_id=file_id,
-                    filename=file_metadata.filename,
+                    filename=str(file_metadata.filename),
                     content=content,
-                    user_id=file_metadata.user_id,
+                    user_id=str(file_metadata.user_id),
                     channel_id=str(ctx.channel.id),
-                    description=file_metadata.description
+                    description=str(file_metadata.description)
                 )
 
                 await status_msg.edit(
@@ -566,8 +671,8 @@ class FileManagerCog(commands.Cog):
             await status_msg.edit(content=f"❌ Error re-indexing file: {str(e)}")
         finally:
             # Clean up temp file
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
+            if os.path.exists(str(temp_file_path)):
+                os.remove(str(temp_file_path))
 
     @commands.command(name='debugfile', aliases=[])
     @commands.cooldown(3, 60, commands.BucketType.user)
@@ -588,7 +693,7 @@ class FileManagerCog(commands.Cog):
 
         # Search for chunks of this file
         results = await self.vector_service.search_documents(
-            query=file_metadata.filename,
+            query=str(file_metadata.filename),
             channel_id=str(ctx.channel.id),
             file_id=str(file_id),
             top_k=50
@@ -596,7 +701,7 @@ class FileManagerCog(commands.Cog):
 
         # Also try a general search
         general_results = await self.vector_service.search_similar(
-            query=file_metadata.filename,
+            query=str(file_metadata.filename),
             channel_id=str(ctx.channel.id),
             content_type=['document'],
             top_k=10

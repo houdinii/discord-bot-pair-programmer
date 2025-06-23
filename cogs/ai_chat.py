@@ -1,4 +1,37 @@
-# cogs/ai_chat.py
+"""
+AI Chat Cog for PairProgrammer Discord Bot
+
+This cog provides the core AI interaction functionality, including chat commands,
+document analysis, context retrieval, and conversation management. It integrates
+with multiple AI providers and maintains conversation context through vector
+database storage.
+
+Key Features:
+    - Multi-provider AI chat (OpenAI, Anthropic)
+    - Context-aware conversations with memory
+    - Document-specific Q&A capabilities
+    - Message chunking for Discord's character limits
+    - Automatic conversation storage for context building
+    - Model selection and provider switching
+    - Search and context preview functionality
+
+Commands:
+    - !chat: Full-featured AI chat with provider/model selection
+    - !quick: Quick chat with default GPT-4 model
+    - !askdoc: Question-answering about uploaded documents
+    - !models: List available AI models
+    - !search: Search conversation history
+    - !context: Preview context retrieval
+    - !autosave: Toggle automatic memory saving
+
+Integration:
+    - AIService: Multi-provider AI model access
+    - VectorService: Context storage and retrieval
+    - Discord: Message handling and user interaction
+
+Author: PairProgrammer Team
+"""
+
 from datetime import datetime
 import discord
 from discord.ext import commands
@@ -10,14 +43,85 @@ logger = get_logger(__name__)
 
 
 class AIChatCog(commands.Cog):
+    """
+    Discord cog providing AI chat functionality and conversation management.
+    
+    This cog serves as the primary interface for AI interactions within Discord,
+    handling multiple AI providers, context management, and conversation storage.
+    It provides both simple quick-chat functionality and advanced features like
+    document Q&A and context-aware conversations.
+    
+    Attributes:
+        bot (commands.Bot): Discord bot instance
+        ai_service (AIService): AI provider interface
+        vector_service (VectorService): Vector database for context storage
+        
+    Features:
+        - Multi-provider AI support (OpenAI, Anthropic)
+        - Conversation context from vector database
+        - Document-specific questioning
+        - Message chunking for Discord limits
+        - Automatic conversation storage
+        - Debug and search capabilities
+        
+    Example Usage:
+        !quick How do I implement async/await in Python?
+        !chat anthropic claude-sonnet-4-0 Explain decorators
+        !askdoc 123 What are the key findings in this paper?
+    """
+    
     def __init__(self, bot):
+        """
+        Initialize the AIChatCog with required services.
+        
+        Args:
+            bot (commands.Bot): Discord bot instance
+            
+        Services Initialized:
+            - AIService: For multi-provider AI interactions
+            - VectorService: For context storage and retrieval
+        """
         self.bot = bot
         self.ai_service = AIService()
         self.vector_service = VectorService()
         logger.logger.info("AIChatCog initialized")
 
     async def send_long_message(self, ctx, content: str, provider: str = None, model: str = None):
-        """Helper to send long messages split into chunks"""
+        """
+        Send long messages to Discord with automatic chunking.
+        
+        Handles Discord's 2000-character limit by intelligently splitting long
+        messages into multiple chunks while preserving formatting and adding
+        provider/model headers when specified.
+        
+        Args:
+            ctx (commands.Context): Discord command context
+            content (str): Message content to send
+            provider (str, optional): AI provider name for header
+            model (str, optional): AI model name for header
+            
+        Features:
+            - Respects Discord's 2000-character limit
+            - Intelligent line-break splitting
+            - Provider/model attribution headers
+            - Code block continuation formatting
+            - Logging of message chunks and lengths
+            
+        Chunking Strategy:
+            1. If content fits in 1990 chars, send as single message
+            2. Otherwise, split on any line breaks to preserve formatting
+            3. Add continuation markers for code blocks
+            4. Log chunk information for debugging
+            
+        Example:
+            await self.send_long_message(
+                ctx, 
+                long_ai_response,
+                provider='openai',
+                model='gpt-4'
+            )
+            # Results in: **Openai (gpt-4):** followed by chunked content
+        """
         logger.log_data('IN', 'SEND_MESSAGE', {
             'content_length': len(content),
             'provider': provider,
@@ -103,7 +207,7 @@ class AIChatCog(commands.Cog):
                 if not doc_results:
                     # Try a broader search without the question filter
                     doc_results = await self.vector_service.search_documents(
-                        query=file_metadata.filename,  # Search by filename
+                        query=str(file_metadata.filename),  # Search by filename
                         channel_id=str(ctx.channel.id),
                         file_id=str(file_id),
                         top_k=10
@@ -445,6 +549,7 @@ class AIChatCog(commands.Cog):
                     'type': 'conversation'
                 })
 
+            # noinspection PyUnresolvedReferences
             if hasattr(self.bot, 'autosave_channels') and str(ctx.channel.id) in self.bot.autosave_channels:
                 # Check if the conversation seems important
                 important_keywords = ['project', 'using', 'stack', 'decided', 'will use', 'going with',
