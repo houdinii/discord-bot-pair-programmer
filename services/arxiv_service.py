@@ -1,11 +1,10 @@
 import asyncio
 import io
-import hashlib
-from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
-import requests
+
 import fitz  # PyMuPDF
-from arxiv import Search, SortCriterion, SortOrder, Result
+import requests
+from arxiv import Search, SortCriterion, SortOrder, Client
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
@@ -59,9 +58,10 @@ class ArxivService:
                 sort_by=SortCriterion.Relevance,
                 sort_order=SortOrder.Descending
             )
+            client = Client()
 
             results = []
-            for result in search.results():
+            for result in client.results(search=search):
                 paper_data = {
                     'id': self.clean_paper_id(result.entry_id),
                     'title': result.title.strip(),
@@ -93,8 +93,10 @@ class ArxivService:
 
         def _get_metadata_sync():
             search = Search(query=f"id:{clean_id}", max_results=1)
+            client = Client()
 
-            for result in search.results():
+            results = []
+            for result in client.results(search=search):
                 return {
                     'id': clean_id,
                     'title': result.title.strip(),
@@ -206,9 +208,10 @@ class ArxivService:
                 sort_by=SortCriterion.SubmittedDate,
                 sort_order=SortOrder.Descending
             )
+            client = Client()
 
             results = []
-            for result in search.results():
+            for result in client.results(search=search):
                 paper_data = {
                     'id': self.clean_paper_id(result.entry_id),
                     'title': result.title.strip(),

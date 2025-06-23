@@ -114,18 +114,9 @@ class ArxivCog(commands.Cog):
             await status_msg.edit(content=f"❌ Error searching arXiv: {str(e)}")
 
     @commands.command(name='arxiv_load', aliases=['al', 'load_paper'])
-    @commands.cooldown(3, 300, commands.BucketType.user)  # Longer cooldown due to PDF processing
+    @commands.cooldown(3, 300, commands.BucketType.user)
     async def load_paper(self, ctx, paper_id: str, *, description: str = ""):
-        """
-        Load and index an arXiv paper for AI analysis
-
-        This downloads the PDF, extracts text, and stores it in the vector database
-        for context-aware AI conversations and analysis.
-
-        Usage:
-            !arxiv_load 2304.03442
-            !al 2304.03442 "Interesting paper about transformers"
-        """
+        """Load and index an arXiv paper for AI analysis"""
         clean_id = self.arxiv_service.clean_paper_id(paper_id)
 
         status_msg = await ctx.send(f"📥 Loading paper `{clean_id}`...")
@@ -140,18 +131,25 @@ class ArxivCog(commands.Cog):
                     await status_msg.edit(content=f"❌ Paper `{clean_id}` not found on arXiv")
                     return
 
-                # Check if already loaded
+                # Check if already loaded - be more specific in the search
                 existing = await self.vector_service.search_similar(
-                    query=f"arxiv:{clean_id}",
+                    query=f"arxiv_id:{clean_id}",  # More specific search
                     channel_id=str(ctx.channel.id),
                     content_type=['arxiv_paper'],
-                    top_k=1
+                    top_k=5
                 )
 
-                if existing:
+                # Double-check by looking at metadata
+                already_loaded = False
+                for result in existing:
+                    if result['metadata'].get('arxiv_id') == clean_id:
+                        already_loaded = True
+                        break
+
+                if already_loaded:
                     await status_msg.edit(
                         content=f"✅ Paper `{clean_id}` already loaded!\n"
-                                f"Use `!askdoc` or `!q` to ask questions about it."
+                                f"Use `!q` to ask questions about it or `!askdoc` for document-specific queries."
                     )
                     return
 
@@ -165,7 +163,7 @@ class ArxivCog(commands.Cog):
                     content, clean_id, metadata['title']
                 )
 
-                # Store in vector database
+                # Store in vector database with clear metadata
                 vector_ids = []
                 for doc in documents:
                     # Enhanced document content for better search
@@ -181,7 +179,9 @@ class ArxivCog(commands.Cog):
                         channel_id=str(ctx.channel.id),
                         metadata={
                             **doc.metadata,
-                            'arxiv_id': clean_id,
+                            'arxiv_id': clean_id,  # Key identifier
+                            'user_loaded': True,  # Mark as user-loaded
+                            'load_timestamp': datetime.now(timezone.utc).isoformat(),
                             'description': description or f"arXiv paper: {metadata['title']}",
                             'authors': ', '.join(metadata['authors']),
                             'published': metadata['published'].isoformat() if metadata['published'] else None,
@@ -827,7 +827,7 @@ class ArxivCog(commands.Cog):
 
             logger.logger.info(f"Generating daily suggestions for channel {channel.id}")
 
-            # Get personalized recommendations
+            # Get personalized recommendations (this does NOT load papers into vector DB)
             recommendations = await self.recommendation_service.get_personalized_recommendations(
                 channel_id=str(channel.id),
                 max_results=5
@@ -849,7 +849,7 @@ class ArxivCog(commands.Cog):
                     recommendations
                 )
 
-            # Create embed with recommendations
+            # Create embed with recommendations (NO LOADING INTO VECTOR DB)
             embed = discord.Embed(
                 title="🌅 Your Daily arXiv Recommendations",
                 description=recommendation_summary,
@@ -893,11 +893,12 @@ class ArxivCog(commands.Cog):
                     inline=False
                 )
 
-            embed.set_footer(text="💡 Load papers with !arxiv_load to improve recommendations")
+            # Emphasize that these are suggestions, not loaded papers
+            embed.set_footer(text="💡 Use !arxiv_load [paper_id] to analyze any paper")
 
             await channel.send(embed=embed)
 
-            logger.logger.info(f"Sent {len(recommendations)} personalized recommendations")
+            logger.logger.info(f"Sent {len(recommendations)} personalized recommendations (not loaded)")
 
         except Exception as e:
             logger.logger.error(f"Error in daily suggestions: {e}", exc_info=True)
@@ -1221,6 +1222,87 @@ class ArxivCog(commands.Cog):
 
         except Exception as e:
             logger.logger.error(f"Error in weekly summary: {e}", exc_info=True)
+
+    @commands.command(name='arxiv_loaded', aliases=['loaded_papers', 'my_papers'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def show_loaded_papers(self, ctx):
+        """
+        Show papers you've actually loaded and indexed
+
+        This shows only papers loaded via !arxiv_load, not just recommended papers.
+        """
+        try:
+            # Get papers that were explicitly loaded
+            results = await self.vector_service.search_similar(
+                query="arxiv paper",
+                channel_id=str(ctx.channel.id),
+                content_type=['arxiv_paper'],
+                top_k=50
+            )
+
+            # Group by paper ID to avoid duplicates
+            loaded_papers = {}
+            for result in results:
+                metadata = result['metadata']
+                arxiv_id = metadata.get('arxiv_id')
+                if arxiv_id and metadata.get('user_loaded'):
+                    if arxiv_id not in loaded_papers:
+                        loaded_papers[arxiv_id] = {
+                            'title': metadata.get('title', 'Unknown'),
+                            'authors': metadata.get('authors', ''),
+                            'load_timestamp': metadata.get('load_timestamp'),
+                            'chunks': 0
+                        }
+                    loaded_papers[arxiv_id]['chunks'] += 1
+
+            if not loaded_papers:
+                await ctx.send("📚 No papers loaded yet. Use `!arxiv_load [paper_id]` to load papers for analysis.")
+                return
+
+            embed = discord.Embed(
+                title="📚 Your Loaded Papers",
+                description=f"You have {len(loaded_papers)} papers loaded and indexed",
+                color=0x0099ff
+            )
+
+            # Sort by load timestamp (most recent first)
+            sorted_papers = sorted(
+                loaded_papers.items(),
+                key=lambda x: x[1].get('load_timestamp', ''),
+                reverse=True
+            )
+
+            for paper_id, info in sorted_papers[:10]:  # Show top 10
+                title = info['title'][:50] + "..." if len(info['title']) > 50 else info['title']
+
+                field_value = f"**ID:** `{paper_id}`\n"
+                field_value += f"**Authors:** {info['authors'][:50]}...\n" if len(info['authors']) > 50 else f"**Authors:** {info['authors']}\n"
+                field_value += f"**Chunks:** {info['chunks']}\n"
+
+                if info.get('load_timestamp'):
+                    load_date = info['load_timestamp'][:10]  # Just the date part
+                    field_value += f"**Loaded:** {load_date}"
+
+                embed.add_field(
+                    name=f"📄 {title}",
+                    value=field_value,
+                    inline=False
+                )
+
+            if len(loaded_papers) > 10:
+                embed.add_field(
+                    name="Note",
+                    value=f"Showing 10 of {len(loaded_papers)} loaded papers",
+                    inline=False
+                )
+
+            embed.set_footer(text="These papers are available for !q, !arxiv_summary, etc.")
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.logger.error(f"Error showing loaded papers: {e}", exc_info=True)
+            await ctx.send(f"❌ Error retrieving loaded papers: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(ArxivCog(bot))

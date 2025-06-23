@@ -1,7 +1,7 @@
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import List, Dict
+from typing import List, Dict, Set
 
 from services.arxiv_service import ArxivService
 from services.vector_service import VectorService
@@ -198,7 +198,11 @@ class RecommendationService:
 
         # Combine queries and search
         all_papers = []
-        seen_ids = set(interests['paper_ids'])  # Don't recommend already loaded papers
+        seen_ids = set()
+
+        # Get papers that are ACTUALLY loaded by the user (not just recommended)
+        actually_loaded_papers = await self._get_user_loaded_papers(channel_id)
+        seen_ids.update(actually_loaded_papers)
 
         for query in search_queries[:3]:  # Limit queries to avoid too many API calls
             try:
@@ -233,6 +237,27 @@ class RecommendationService:
 
         logger.logger.info(f"Generated {len(recommendations)} recommendations")
         return recommendations
+
+    async def _get_user_loaded_papers(self, channel_id: str) -> Set[str]:
+        """Get papers actually loaded by users (not just recommended)"""
+        # Search for papers that were explicitly loaded via !arxiv_load
+        results = await self.vector_service.search_similar(
+            query="arxiv paper",
+            channel_id=channel_id,
+            content_type=['arxiv_paper'],
+            top_k=100
+        )
+
+        loaded_papers = set()
+        for result in results:
+            metadata = result['metadata']
+            # Only count papers that users have explicitly loaded
+            # These should have the 'arxiv_id' metadata
+            arxiv_id = metadata.get('arxiv_id')
+            if arxiv_id:
+                loaded_papers.add(arxiv_id)
+
+        return loaded_papers
 
     def _score_paper_relevance(self, paper: Dict, interests: Dict) -> float:
         """Score a paper's relevance to user interests"""
