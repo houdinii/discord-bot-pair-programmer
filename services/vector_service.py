@@ -147,7 +147,7 @@ class VectorService:
         
         Args:
             namespace (str, optional): Namespace for data isolation.
-                                     Typically the Discord channel ID.
+                                     Typically, the Discord channel ID.
                                      
         Returns:
             PineconeVectorStore: Configured vector store instance
@@ -642,61 +642,8 @@ class VectorService:
     async def get_context_for_ai(self, query: str,
                                  channel_id: str,
                                  max_context_length: int = 3000) -> str:
-        """
-        Build contextual information for AI responses using semantic search.
-        
-        This is the primary method for retrieving relevant context from stored
-        conversations, memories, documents, and GitHub content to enhance AI
-        responses with historical information and channel-specific knowledge.
-        
-        Args:
-            query (str): User's current query for context relevance matching
-            channel_id (str): Discord channel ID for namespace isolation
-            max_context_length (int): Maximum character length for context.
-                                    Default: 3000 characters
-                                    
-        Returns:
-            str: Formatted context string ready for AI system message.
-                 Contains relevant excerpts from conversations, memories,
-                 documents, and GitHub content, separated by dividers.
-                 
-        Context Building Process:
-            1. Search conversations, memories, documents, GitHub content
-            2. Deduplicate and rank by relevance score
-            3. Format each piece with type indicators
-            4. Limit document chunks per file to avoid dominance
-            5. Respect character limit while maximizing information
-            
-        Context Format:
-            ```
-            [Previous conversation - timestamp]
-            User: question
-            Assistant: response
-            
-            ---
-            
-            [Saved Memory - tag]
-            content
-            
-            ---
-            
-            [Document: filename - Part 1/3]
-            document content...
-            ```
-            
-        Example:
-            context = await vector_service.get_context_for_ai(
-                query="How do I implement JWT authentication?",
-                channel_id="123456789",
-                max_context_length=4000
-            )
-            
-            # Context might include:
-            # - Previous auth discussions
-            # - Saved JWT setup memories  
-            # - Relevant documentation chunks
-            # - GitHub code examples
-        """
+        """Get relevant context for AI, including recently loaded papers"""
+
         logger.log_data('IN', 'GET_AI_CONTEXT', {
             'query': query[:100] + '...' if len(query) > 100 else query,
             'channel_id': channel_id,
@@ -704,11 +651,49 @@ class VectorService:
             'max_context_length': max_context_length
         })
 
-        # Search for relevant content - use a higher top_k for documents
-        results = await self.search_similar(
+        # First, check if the query is about a recently loaded paper
+        # Look for phrases that indicate they're asking about "the paper"
+        asking_about_paper = any(phrase in query.lower() for phrase in [
+            'the paper', 'this paper', 'loaded paper', 'about it',
+            'what is it about', 'tell me about', 'summarize it'
+        ])
+
+        results = []
+
+        # If asking about a paper, prioritize recently loaded arXiv papers
+        if asking_about_paper:
+            # Search specifically for recently loaded papers
+            arxiv_results = await self.search_similar(
+                query="arxiv paper loaded user",  # Broad search to get recent papers
+                channel_id=channel_id,
+                content_type=['arxiv_paper'],
+                top_k=20
+            )
+
+            # Sort by load timestamp to get most recent
+            arxiv_with_timestamps = []
+            for result in arxiv_results:
+                load_timestamp = result['metadata'].get('load_timestamp')
+                if load_timestamp:
+                    arxiv_with_timestamps.append((load_timestamp, result))
+
+            # Sort by timestamp (most recent first)
+            arxiv_with_timestamps.sort(key=lambda x: x[0], reverse=True)
+
+            # Add the most recent paper's chunks to results
+            if arxiv_with_timestamps:
+                most_recent_paper_id = arxiv_with_timestamps[0][1]['metadata'].get('arxiv_id')
+
+                # Get all chunks from this paper
+                for _, result in arxiv_with_timestamps:
+                    if result['metadata'].get('arxiv_id') == most_recent_paper_id:
+                        results.append(result)
+
+        # Also do a general search based on the query
+        general_results = await self.search_similar(
             query=query,
             channel_id=channel_id,
-            top_k=25  # Increased to ensure we get documents
+            top_k=25
         )
 
         # Also do a specific document search
@@ -719,7 +704,7 @@ class VectorService:
         )
 
         # Combine and deduplicate results
-        all_results = results + doc_results
+        all_results = results + general_results + doc_results
         seen_ids = set()
         unique_results = []
 
@@ -729,24 +714,69 @@ class VectorService:
                 seen_ids.add(result_id)
                 unique_results.append(result)
 
-        # Sort by score
-        unique_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+        # Sort by score, but boost recent arXiv papers
+        def sort_key(result):
+            score = result.get('score', 0)
+            # Boost recently loaded arXiv papers
+            if result['metadata'].get('type') == 'arxiv_paper':
+                load_timestamp = result['metadata'].get('load_timestamp')
+                if load_timestamp:
+                    # Papers loaded in the last hour get a big boost
+                    from datetime import datetime, timezone, timedelta
+                    try:
+                        load_time = datetime.fromisoformat(load_timestamp.replace('Z', '+00:00'))
+                        time_diff = datetime.now(timezone.utc) - load_time
+                        if time_diff < timedelta(hours=1):
+                            score += 2.0  # Big boost for very recent
+                        elif time_diff < timedelta(days=1):
+                            score += 1.0  # Moderate boost for today
+                    except:
+                        pass
+            return score
 
+        unique_results.sort(key=sort_key, reverse=True)
+
+        # Build context
         parts = []
         length = 0
+        text = ""
         used_results = 0
-        used_files = {}  # Track which files we've included
+        used_files = {}
+        included_papers = set()
 
         for result in unique_results:
-            # Score threshold
-            if result.get("score", 1) < 0.5:
+            # Score threshold (lowered for arxiv papers)
+            min_score = 0.3 if result['metadata'].get('type') == 'arxiv_paper' else 0.5
+            if result.get("score", 1) < min_score:
                 continue
 
             md = result["metadata"]
             content = result.get('content', '')
 
             # Build context text based on type
-            if md["type"] == "conversation":
+            if md.get("type") == "arxiv_paper":
+                arxiv_id = md.get('arxiv_id')
+                if arxiv_id and arxiv_id not in included_papers:
+                    included_papers.add(arxiv_id)
+
+                    # Extract actual content
+                    if "Content:\n" in content:
+                        actual_content = content.split("Content:\n", 1)[1]
+                    else:
+                        actual_content = content
+
+                    # Include paper metadata for better context
+                    title = md.get('title', 'Unknown')
+                    authors = md.get('authors', 'Unknown')
+                    chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
+
+                    text = f"[arXiv Paper: {title}]\n"
+                    text += f"Paper ID: {arxiv_id}\n"
+                    text += f"Authors: {authors}\n"
+                    text += f"{chunk_info}\n"
+                    text += f"Content: {actual_content[:800]}..."
+
+            elif md["type"] == "conversation":
                 timestamp = md.get('timestamp', 'Unknown time')
                 text = f"[Previous conversation - {timestamp[:19]}]\n"
                 text += f"User: {md.get('message', 'N/A')}\n"
@@ -759,12 +789,10 @@ class VectorService:
                 file_id = md.get('file_id')
                 filename = md.get('filename', 'Unknown')
 
-                # Track how many chunks per file we've included
                 if file_id:
                     if file_id not in used_files:
                         used_files[file_id] = 0
 
-                    # Limit chunks per file to avoid one document dominating
                     if used_files[file_id] >= 3:
                         continue
 
@@ -772,7 +800,6 @@ class VectorService:
 
                 chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
 
-                # Extract actual content (remove search enhancement prefix)
                 if "Content:\n" in content:
                     actual_content = content.split("Content:\n", 1)[1]
                 else:
@@ -789,16 +816,15 @@ class VectorService:
                     text = f"[GitHub Code - {repo_name}/{file_path}]\n{content[:500]}..."
                 else:
                     text = f"[GitHub {github_type} - {repo_name}]\n{content[:500]}..."
-
             else:
-                continue  # Skip unknown types
+                continue
 
             # Check length limit
             if length + len(text) + 50 > max_context_length:
                 break
 
             parts.append(text)
-            length += len(text) + 4  # Account for separators
+            length += len(text) + 4
             used_results += 1
 
         context = "\n\n---\n\n".join(parts) if parts else ""
@@ -808,6 +834,7 @@ class VectorService:
             'parts_used': used_results,
             'total_results': len(unique_results),
             'unique_documents': len(used_files),
+            'arxiv_papers_included': len(included_papers),
             'document_chunks_used': sum(used_files.values()),
             'context_preview': context[:200] + '...' if len(context) > 200 else context,
             'namespace': channel_id

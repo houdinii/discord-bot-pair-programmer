@@ -228,6 +228,14 @@ class ArxivCog(commands.Cog):
                     inline=False
                 )
 
+                # Store reference to last loaded paper for easy access
+                await self.vector_service.store_memory(
+                    user_id=str(ctx.author.id),
+                    channel_id=str(ctx.channel.id),
+                    tag=f"last_loaded_paper",
+                    content=f"Paper ID: {clean_id}, Title: {metadata['title']}, Loaded at: {datetime.now(timezone.utc).isoformat()}"
+                )
+
                 await ctx.send(embed=embed)
 
         except Exception as e:

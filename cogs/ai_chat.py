@@ -108,7 +108,7 @@ class AIChatCog(commands.Cog):
             - Logging of message chunks and lengths
             
         Chunking Strategy:
-            1. If content fits in 1990 chars, send as single message
+            1. If content fits in 1990 chars, then send it as single message
             2. Otherwise, split on any line breaks to preserve formatting
             3. Add continuation markers for code blocks
             4. Log chunk information for debugging
@@ -120,7 +120,7 @@ class AIChatCog(commands.Cog):
                 provider='openai',
                 model='gpt-4'
             )
-            # Results in: **Openai (gpt-4):** followed by chunked content
+            # Results in: **OpenAI (gpt-4):** followed by chunked content
         """
         logger.log_data('IN', 'SEND_MESSAGE', {
             'content_length': len(content),
@@ -308,7 +308,7 @@ class AIChatCog(commands.Cog):
                             remaining = remaining[1900:]
                             await ctx.send(chunk)
                 else:
-                    # Very long response - send embed with preview, then full response
+                    # Very long response - send the embed with preview, then full response
                     embed.add_field(
                         name="Answer Preview",
                         value=response[:1021] + "...",
