@@ -1,6 +1,5 @@
 # cogs/ai_chat.py
 from datetime import datetime
-
 import discord
 from discord.ext import commands
 from services.ai_service import AIService
@@ -62,7 +61,8 @@ class AIChatCog(commands.Cog):
                     # Add continuation marker for further chunks
                     await ctx.send(f"```\n{chunk}\n```" if not chunk.startswith("```") else chunk)
 
-    @commands.command(name='askdoc')
+    @commands.command(name='askdoc', aliases=['ad', 'askedoc', 'question', 'qd'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def ask_about_document(self, ctx, file_id: int, *, question: str):
         """
         Ask a question about a specific document
@@ -235,7 +235,8 @@ class AIChatCog(commands.Cog):
             except Exception:
                 await ctx.send(f"❌ Error processing document question: {str(e)}")
 
-    @commands.command(name='compare')
+    @commands.command(name='compare', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def compare_documents(self, ctx, file_id1: int, file_id2: int):
         """
         Compare two documents
@@ -245,7 +246,8 @@ class AIChatCog(commands.Cog):
         # This would fetch both documents and ask AI to compare them
         pass
 
-    @commands.command(name='asksimple')
+    @commands.command(name='asksimple', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def ask_simple(self, ctx, file_id: int, *, question: str):
         """
         Simpler version of askdoc for debugging
@@ -281,6 +283,7 @@ class AIChatCog(commands.Cog):
         # Build simple context
         context = f"From document '{file_metadata.filename}':\n\n"
         for i, chunk in enumerate(doc_results[:3]):
+            # noinspection PyUnresolvedReferences
             content = chunk['content']
             if "Content:\n" in content:
                 content = content.split("Content:\n", 1)[1]
@@ -300,7 +303,8 @@ class AIChatCog(commands.Cog):
         # Send response
         await self.send_long_message(ctx, response, provider='openai', model='chatgpt-4o-latest')
 
-    @commands.command(name='debugask')
+    @commands.command(name='debugask', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def debug_askdoc(self, ctx, file_id: int):
         """
         Debug what askdoc sees
@@ -369,7 +373,8 @@ class AIChatCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='chat')
+    @commands.command(name='chat', aliases=['c', 'ask', 'ai'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def chat_with_ai(self, ctx, provider: str = 'openai', model: str = 'chatgpt-4o-latest', *, message: str):
         """
@@ -480,7 +485,8 @@ class AIChatCog(commands.Cog):
             logger.logger.error(f"Exception in !chat handler: {e}", exc_info=True)
             await ctx.send(f"❌ Error: {str(e)}")
 
-    @commands.command(name='models')
+    @commands.command(name='models', aliases=['model', 'list_models', 'lm'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def list_models(self, ctx):
         """List available AI models"""
@@ -520,7 +526,8 @@ class AIChatCog(commands.Cog):
         await ctx.send(embed=embed)
         logger.logger.info(f"Sent models list to {ctx.author}")
 
-    @commands.command(name='quick')
+    @commands.command(name='quick', aliases=['q', 'gpt', 'ask4'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def quick_chat(self, ctx, *, message: str):
         """Quick chat with default model (chatgpt-4o-latest) - includes context!"""
@@ -535,7 +542,8 @@ class AIChatCog(commands.Cog):
         # This ensures context is included just like regular chat
         await self.chat_with_ai(ctx, 'openai', 'chatgpt-4o-latest', message=message)
 
-    @commands.command(name='search')
+    @commands.command(name='search', aliases=['s', 'find', 'lookup'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def search_context(self, ctx, *, query: str):
         """Search through conversation and memory history"""
@@ -589,8 +597,9 @@ class AIChatCog(commands.Cog):
             await ctx.send(embed=embed)
             logger.logger.info(f"Sent {len(results)} search results to {ctx.author}")
 
-    @commands.command(name='autosave')
+    @commands.command(name='autosave', aliases=['as', 'auto', 'toggle_save'])
     @log_method()
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def toggle_autosave(self, ctx):
         """Toggle automatic memory saving for important conversations"""
         # Store this preference per channel
@@ -607,7 +616,8 @@ class AIChatCog(commands.Cog):
             self.bot.autosave_channels.add(channel_id)
             await ctx.send("✅ Automatic memory saving enabled for this channel")
 
-    @commands.command(name='context')
+    @commands.command(name='context', aliases=['ctx', 'preview', 'show_context'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def show_context(self, ctx, *, query: str = "recent conversations"):
         """Show what context would be retrieved for a query"""

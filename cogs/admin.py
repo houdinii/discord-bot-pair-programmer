@@ -9,6 +9,7 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name='initdb')
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @commands.has_permissions(administrator=True)
     async def initialize_database(self, ctx):
         """Initialize the database tables (admin only)"""
@@ -18,7 +19,9 @@ class AdminCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error initializing database: {str(e)}")
 
+    # noinspection PyUnusedLocal
     @commands.command(name='dropdb')
+    @commands.cooldown(3, 60, commands.BucketType.user)
     @commands.has_permissions(administrator=True)
     async def drop_database(self, ctx):
         """Drop all database tables (admin only, DANGEROUS)"""

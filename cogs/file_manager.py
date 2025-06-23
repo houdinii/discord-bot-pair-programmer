@@ -10,6 +10,8 @@ import PyPDF2
 from datetime import datetime, UTC
 from typing import List, Optional
 import mimetypes
+
+from sqlalchemy import func
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,7 +37,101 @@ class FileManagerCog(commands.Cog):
             '.log': self._extract_text_file,
         }
 
-    @commands.command(name='upload')
+    async def _extract_file_content(self, file_path: str, filename: str) -> Optional[str]:
+        """Extract text content from various file types"""
+        ext = os.path.splitext(filename)[1].lower()
+
+        if ext in self.text_extractors:
+            try:
+                return await self.text_extractors[ext](file_path)
+            except Exception as e:
+                logger.logger.error(f"Error extracting content from {filename}: {e}")
+                return None
+        else:
+            logger.logger.info(f"No text extractor for file type: {ext}")
+            return None
+
+    async def _extract_pdf_text(self, file_path: str) -> str:
+        """Extract text from PDF file"""
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+                return text.strip()
+        except Exception as e:
+            logger.logger.error(f"Error extracting PDF text: {e}")
+            raise
+
+    async def _extract_text_file(self, file_path: str) -> str:
+        """Extract text from plain text files"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+        except UnicodeDecodeError:
+            # Try with different encoding
+            with open(file_path, 'r', encoding='latin-1') as file:
+                return file.read()
+
+    async def _index_file_content(self, file_id: int, filename: str, content: str,
+                                  user_id: str, channel_id: str, description: str) -> List[str]:
+        """Chunk and index file content in vector database"""
+        vector_ids = []
+
+        # Chunk the content
+        chunks = self._chunk_text(content, chunk_size=1500)
+
+        logger.logger.info(f"Indexing {len(chunks)} chunks for file {filename} (ID: {file_id})")
+
+        for i, chunk in enumerate(chunks):
+            # Create metadata for this chunk
+            chunk_metadata = {
+                "file_id": str(file_id),  # Ensure it's a string
+                "filename": filename,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "description": description,
+                "file_type": os.path.splitext(filename)[1].lower()
+            }
+
+            # Store in vector database
+            vector_id = await self.vector_service.store_document_chunk(
+                filename=filename,
+                content=chunk,
+                user_id=user_id,
+                channel_id=channel_id,
+                metadata=chunk_metadata
+            )
+            vector_ids.append(vector_id)
+
+            logger.logger.debug(f"Stored chunk {i + 1}/{len(chunks)} with ID: {vector_id}")
+
+        return vector_ids
+
+    def _chunk_text(self, text: str, chunk_size: int = 1500) -> List[str]:
+        """Split text into chunks while preserving sentence boundaries"""
+        if len(text) <= chunk_size:
+            return [text]
+
+        chunks = []
+        sentences = text.replace('\n\n', '\n<PARAGRAPH>\n').split('. ')
+        current_chunk = ""
+
+        for sentence in sentences:
+            sentence = sentence.replace('\n<PARAGRAPH>\n', '\n\n')
+            if len(current_chunk) + len(sentence) + 2 > chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence
+            else:
+                current_chunk += (". " if current_chunk else "") + sentence
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
+    @commands.command(name='upload', aliases=['up', 'add', 'attach'])
     async def upload_file(self, ctx, *, description: str = "No description"):
         """
         Upload a file with optional description
@@ -139,101 +235,8 @@ class FileManagerCog(commands.Cog):
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
 
-    async def _extract_file_content(self, file_path: str, filename: str) -> Optional[str]:
-        """Extract text content from various file types"""
-        ext = os.path.splitext(filename)[1].lower()
-
-        if ext in self.text_extractors:
-            try:
-                return await self.text_extractors[ext](file_path)
-            except Exception as e:
-                logger.logger.error(f"Error extracting content from {filename}: {e}")
-                return None
-        else:
-            logger.logger.info(f"No text extractor for file type: {ext}")
-            return None
-
-    async def _extract_pdf_text(self, file_path: str) -> str:
-        """Extract text from PDF file"""
-        try:
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = ""
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-                return text.strip()
-        except Exception as e:
-            logger.logger.error(f"Error extracting PDF text: {e}")
-            raise
-
-    async def _extract_text_file(self, file_path: str) -> str:
-        """Extract text from plain text files"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
-        except UnicodeDecodeError:
-            # Try with different encoding
-            with open(file_path, 'r', encoding='latin-1') as file:
-                return file.read()
-
-    async def _index_file_content(self, file_id: int, filename: str, content: str,
-                                  user_id: str, channel_id: str, description: str) -> List[str]:
-        """Chunk and index file content in vector database"""
-        vector_ids = []
-
-        # Chunk the content
-        chunks = self._chunk_text(content, chunk_size=1500)
-
-        logger.logger.info(f"Indexing {len(chunks)} chunks for file {filename} (ID: {file_id})")
-
-        for i, chunk in enumerate(chunks):
-            # Create metadata for this chunk
-            chunk_metadata = {
-                "file_id": str(file_id),  # Ensure it's a string
-                "filename": filename,
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-                "description": description,
-                "file_type": os.path.splitext(filename)[1].lower()
-            }
-
-            # Store in vector database
-            vector_id = await self.vector_service.store_document_chunk(
-                filename=filename,
-                content=chunk,
-                user_id=user_id,
-                channel_id=channel_id,
-                metadata=chunk_metadata
-            )
-            vector_ids.append(vector_id)
-
-            logger.logger.debug(f"Stored chunk {i + 1}/{len(chunks)} with ID: {vector_id}")
-
-        return vector_ids
-
-    def _chunk_text(self, text: str, chunk_size: int = 1500) -> List[str]:
-        """Split text into chunks while preserving sentence boundaries"""
-        if len(text) <= chunk_size:
-            return [text]
-
-        chunks = []
-        sentences = text.replace('\n\n', '\n<PARAGRAPH>\n').split('. ')
-        current_chunk = ""
-
-        for sentence in sentences:
-            sentence = sentence.replace('\n<PARAGRAPH>\n', '\n\n')
-            if len(current_chunk) + len(sentence) + 2 > chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence
-            else:
-                current_chunk += (". " if current_chunk else "") + sentence
-
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-
-        return chunks
-
-    @commands.command(name='files')
+    @commands.command(name='files', aliases=['f', 'list', 'ls', 'docs'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_files(self, ctx, user: discord.Member = None):
         """
         List uploaded files
@@ -274,7 +277,8 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='searchfiles')
+    @commands.command(name='searchfiles', aliases=['sf', 'searchdocs', 'finddoc', 'fd'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def search_files(self, ctx, *, query: str):
         """
         Search files by content or metadata
@@ -333,7 +337,8 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='fileinfo')
+    @commands.command(name='fileinfo', aliases=['fi', 'info', 'details'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def file_info(self, ctx, file_id: int):
         """
         Get detailed information about a file
@@ -385,7 +390,8 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='getfile')
+    @commands.command(name='getfile', aliases=['get', 'download', 'dl'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def get_file(self, ctx, file_id: int):
         """
         Get a download link for a file
@@ -418,7 +424,8 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='deletefile')
+    @commands.command(name='deletefile', aliases=['delete', 'rm', 'remove'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def delete_file(self, ctx, file_id: int):
         """
         Delete a file (only file owner can delete)
@@ -454,7 +461,8 @@ class FileManagerCog(commands.Cog):
 
         db.close()
 
-    @commands.command(name='papers')
+    @commands.command(name='papers', aliases=['p', 'documents', 'pdfs'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_papers(self, ctx, filter_type: str = "all"):
         """
         List papers/documents with filtering
@@ -497,8 +505,9 @@ class FileManagerCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='reindex')
+    @commands.command(name='reindex', aliases=['ri', 'refresh', 'rescan'])
     @commands.has_permissions(administrator=True)
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def reindex_file(self, ctx, file_id: int):
         """
         Re-index a file's content (admin only)
@@ -560,7 +569,8 @@ class FileManagerCog(commands.Cog):
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
 
-    @commands.command(name='debugfile')
+    @commands.command(name='debugfile', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def debug_file(self, ctx, file_id: int):
         """
         Debug command to check file indexing status
@@ -622,6 +632,100 @@ class FileManagerCog(commands.Cog):
         )
 
         await ctx.send(embed=embed)
+
+    @commands.command(name='filestats', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def file_statistics(self, ctx):
+        """Show file upload statistics for the channel"""
+        db = get_db()
+
+        # Get stats
+        total_files = db.query(FileMetadata).count()
+        # TODO: FIX TOTAL SIZE
+        # total_size = db.query(func.sum(FileMetadata.file_size)).scalar() or 0
+        total_size = 4096
+        file_types = db.query(
+            FileMetadata.file_type,
+            func.count(FileMetadata.id)
+        ).group_by(FileMetadata.file_type).all()
+
+        db.close()
+
+        embed = discord.Embed(
+            title="📊 File Statistics",
+            color=0x0099ff
+        )
+
+        embed.add_field(name="Total Files", value=str(total_files), inline=True)
+        embed.add_field(name="Total Size", value=f"{total_size / 1024 / 1024:.1f} MB", inline=True)
+
+        # Top file types
+        type_str = "\n".join([f"{ft}: {count}" for ft, count in file_types[:5]])
+        embed.add_field(name="Top File Types", value=type_str or "None", inline=False)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='export')
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def export_conversations(self, ctx, days: int = 7):
+        """Export recent conversations to a file"""
+        # TODO: Complete export recent conversations
+        # Get recent conversations from vector DB
+        # Format as markdown
+        # Upload to S3 and provide download link
+
+    @commands.command(name='import_memories', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def import_memories(self, ctx):
+        """Import memories from a JSON file"""
+        # TODO: COMPLETE BULK IMPORT MEMORIES
+        # Parse attached JSON file
+        # Bulk insert memories with tags
+
+    @commands.command(name='advanced_search', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def advanced_search(self, ctx, content_type: str, *, query: str):
+        """Search with filters: !advanced_search docs authentication"""
+        # TODO complete the advanced file search command
+        # Search only specific content types
+        # Support date ranges, authors, etc.
+
+    @commands.command(name='backup', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    @commands.has_permissions(administrator=True)
+    async def backup_channel(self, ctx):
+        """Backup all channel data to a file"""
+        # TODO Complete the backup channel command
+        # Export all memories, conversations, file metadata
+        # Create downloadable archive
+
+    @commands.command(name='usage', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def show_usage(self, ctx, days: int = 30):
+        """Show usage statistics for the channel"""
+        # TODO Complete the usage statistics command
+        # Track command usage
+        # Show most active users
+        # Popular search queries
+        # AI model preferences
+
+    @commands.command(name='compare', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def compare_files(self, ctx, file_id1: int, file_id2: int):
+        """Compare two documents for similarities and differences"""
+        # TODO: Complete compare files
+        # Extract both documents
+        # Use AI to analyze differences
+        # Highlight key distinctions
+
+    @commands.command(name='summarize', aliases=[])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def summarize_channel(self, ctx, hours: int = 24):
+        """Summarize recent channel activity"""
+        # TODO: Complete the summarize entire channel logic
+        # Get recent conversations
+        # Generate AI summary of key topics
+        # Highlight important decisions
 
 
 async def setup(bot):

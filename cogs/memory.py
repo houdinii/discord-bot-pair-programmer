@@ -10,7 +10,7 @@ class MemoryCog(commands.Cog):
         self.bot = bot
         self.vector_service = VectorService()
 
-    @commands.command(name='remember')
+    @commands.command(name='remember', aliases=['r', 'save', 'mem', 'note'])
     async def remember_context(self, ctx, tag: str, *, description: str):
         """
         Remember important context with a tag
@@ -33,7 +33,7 @@ class MemoryCog(commands.Cog):
         embed.add_field(name="Vector ID", value=vector_id[:8] + "...", inline=True)
         await ctx.send(embed=embed)
 
-    @commands.command(name='recall')
+    @commands.command(name='recall', aliases=['rc', 'find_memory', 'search_memory'])
     async def recall_memory(self, ctx, *, query: str):
         """
         Recall memories by searching for similar content
@@ -72,7 +72,7 @@ class MemoryCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='get_memory')
+    @commands.command(name='get_memory', aliases=['gm', 'getmem', 'memory'])
     async def get_memory_by_tag(self, ctx, tag: str):
         """
         Get a specific memory by its tag
@@ -98,7 +98,7 @@ class MemoryCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='list_memories')
+    @commands.command(name='list_memories', aliases=['lm', 'memories', 'list_mem', 'mems'])
     async def list_memories(self, ctx):
         """
         List all memory tags in this channel
@@ -141,7 +141,7 @@ class MemoryCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='forget')
+    @commands.command(name='forget', aliases=['fg', 'delete_memory', 'delmem'])
     async def forget_memory(self, ctx, tag: str):
         """
         Delete memories by tag
@@ -159,7 +159,7 @@ class MemoryCog(commands.Cog):
         else:
             await ctx.send(f"❌ No memories found with tag: {tag}")
 
-    @commands.command(name='stats')
+    @commands.command(name='stats', aliases=['st', 'statistics', 'info'])
     async def vector_stats(self, ctx):
         """Show vector database statistics"""
         stats = await self.vector_service.get_stats()
@@ -175,7 +175,7 @@ class MemoryCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='debug_memories')
+    @commands.command(name='debug_memories', aliases=['dm', 'debug_mem', 'checkmem'])
     async def debug_memories(self, ctx):
         """Debug command to check memory storage"""
         # First check stats

@@ -21,7 +21,8 @@ class GitHubCog(commands.Cog):
         self.github_service = GitHubService(GITHUB_TOKEN)
         self.vector_service = VectorService()
 
-    @commands.command(name='address')
+    @commands.command(name='address', aliases=['add_repo', 'track', 'watch'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def add_repository(self, ctx, repo_url: str):
         """
         Add a GitHub repository to track in this channel
@@ -78,7 +79,7 @@ class GitHubCog(commands.Cog):
                     try:
                         readme = repo.get_readme()
                         readme_content = readme.decoded_content.decode('utf-8')
-                    except:
+                    except Exception:
                         logger.logger.info(f"No README found for {repo_name}")
 
                     topics = repo.get_topics() if hasattr(repo, 'get_topics') else []
@@ -102,6 +103,7 @@ class GitHubCog(commands.Cog):
                     )
 
                     # Store tree structure
+                    # noinspection PyUnusedLocal
                     tree_id = await self.vector_service.store_github_structure(
                         repo_name=repo_name,
                         channel_id=str(ctx.channel.id),
@@ -165,7 +167,8 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error adding repository: {str(e)}")
             logger.logger.error(f"Error in add_repository: {str(e)}", exc_info=True)
 
-    @commands.command(name='issues')
+    @commands.command(name='issues', aliases=['i', 'bugs', 'issue'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
         """
         List issues from a tracked repository
@@ -179,7 +182,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True
+                    GitHubRepo.is_active is True
                 ).first()
 
                 if not tracked_repo:
@@ -220,7 +223,8 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error listing issues: {str(e)}")
             logger.logger.error(f"Error in list_issues: {str(e)}", exc_info=True)
 
-    @commands.command(name='prs')
+    @commands.command(name='prs', aliases=['pr', 'pulls', 'pullrequests'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
         """
         List pull requests from a tracked repository
@@ -234,7 +238,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True
+                    GitHubRepo.is_active is True
                 ).first()
 
                 if not tracked_repo:
@@ -272,7 +276,8 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error listing pull requests: {str(e)}")
             logger.logger.error(f"Error in list_pull_requests: {str(e)}", exc_info=True)
 
-    @commands.command(name='repoinfo')
+    @commands.command(name='repoinfo', aliases=['ri', 'repo', 'about'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def repository_info(self, ctx, repo_name: str = None):
         """
         Get detailed information about a tracked repository
@@ -289,7 +294,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True
+                    GitHubRepo.is_active is True
                 ).first()
 
                 if not tracked_repo:
@@ -310,10 +315,10 @@ class GitHubCog(commands.Cog):
                 embed.add_field(name="Forks", value=repo.forks_count, inline=True)
                 embed.add_field(name="Open Issues", value=repo.open_issues_count, inline=True)
 
-                # FIX: Safely get PR count
+                # TODO FIX: Safely get PR count
                 try:
                     pr_count = len(list(repo.get_pulls(state='open')))
-                except:
+                except Exception:
                     pr_count = "N/A"
 
                 embed.add_field(name="Open PRs", value=pr_count, inline=True)
@@ -328,7 +333,7 @@ class GitHubCog(commands.Cog):
                             for commit in commits
                         ])
                         embed.add_field(name="Recent Commits", value=recent_commits, inline=False)
-                except:
+                except Exception:
                     logger.logger.warning(f"Could not fetch commits for {repo_name}")
 
                 await ctx.send(embed=embed)
@@ -339,7 +344,8 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error getting repository info: {str(e)}")
             logger.logger.error(f"Error in repository_info: {str(e)}", exc_info=True)
 
-    @commands.command(name='repos')
+    @commands.command(name='repos', aliases=['repositories', 'list_repos', 'lr'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_repositories(self, ctx):
         """List all tracked repositories in this channel"""
         db = get_db()
@@ -347,7 +353,7 @@ class GitHubCog(commands.Cog):
             # FIX: is_active comparison was wrong
             repos = db.query(GitHubRepo).filter(
                 GitHubRepo.channel_id == str(ctx.channel.id),
-                GitHubRepo.is_active == True  # Use == instead of 'is'
+                GitHubRepo.is_active is True  # Use == instead of 'is'
             ).all()
 
             if not repos:
@@ -372,7 +378,8 @@ class GitHubCog(commands.Cog):
         finally:
             db.close()
 
-    @commands.command(name='issues')
+    @commands.command(name='issues', aliases=['i', 'bugs', 'issue'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_issues(self, ctx, repo_name: str, state: str = 'open'):
         """
         List issues from a tracked repository
@@ -387,7 +394,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True  # Use == instead of 'is'
+                    GitHubRepo.is_active is True  # Use == instead of 'is'
                 ).first()
 
                 if not tracked_repo:
@@ -421,7 +428,8 @@ class GitHubCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error listing issues: {str(e)}")
 
-    @commands.command(name='createissue')
+    @commands.command(name='createissue', aliases=['ci', 'newissue', 'issue_new'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def create_issue(self, ctx, repo_name: str, title: str, *, body: str = ""):
         """
         Create a new issue in a tracked repository
@@ -435,7 +443,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True  # Use == instead of 'is'
+                    GitHubRepo.is_active is True  # Use == instead of 'is'
                 ).first()
 
                 if not tracked_repo:
@@ -466,7 +474,8 @@ class GitHubCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error creating issue: {str(e)}")
 
-    @commands.command(name='prs')
+    @commands.command(name='prs', aliases=['pr', 'pulls', 'pullrequests'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def list_pull_requests(self, ctx, repo_name: str, state: str = 'open'):
         """
         List pull requests from a tracked repository
@@ -481,7 +490,7 @@ class GitHubCog(commands.Cog):
                 tracked_repo = db.query(GitHubRepo).filter(
                     GitHubRepo.repo_name == repo_name,
                     GitHubRepo.channel_id == str(ctx.channel.id),
-                    GitHubRepo.is_active == True  # Use == instead of 'is'
+                    GitHubRepo.is_active is True  # Use == instead of 'is'
                 ).first()
 
                 if not tracked_repo:
@@ -514,7 +523,8 @@ class GitHubCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error listing pull requests: {str(e)}")
 
-    @commands.command(name='removerepo')
+    @commands.command(name='removerepo', aliases=['rr', 'untrack', 'unwatch'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def remove_repository(self, ctx, repo_name: str):
         """
         Remove a repository from tracking
@@ -543,7 +553,8 @@ class GitHubCog(commands.Cog):
             db.close()
 
     # Debug command to help diagnose issues
-    @commands.command(name='debugrepo')
+    @commands.command(name='debugrepo', aliases=['dr', 'debug_repo', 'checkrepo'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def debug_repo(self, ctx, repo_name: str = None):
         """Debug repository tracking issues"""
         db = get_db()
@@ -589,12 +600,14 @@ class GitHubCog(commands.Cog):
         finally:
             db.close()
 
-    @commands.command(name='namespace_info')
+    @commands.command(name='namespace_info', aliases=['ns', 'namespace', 'nsinfo'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def namespace_info(self, ctx):
         """Show vector database namespace information"""
         channel_id = str(ctx.channel.id)
 
         # Get stats for this namespace
+        # noinspection PyUnusedLocal
         results = await self.vector_service.search_similar(
             query="test",
             channel_id=channel_id,
@@ -611,7 +624,8 @@ class GitHubCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @commands.command(name='codesearch')
+    @commands.command(name='codesearch', aliases=['cs', 'code', 'searchcode', 'grep'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
     async def search_code(self, ctx, repo_name: str, *, query: str):
         """
         Search for code in a tracked repository
@@ -623,7 +637,7 @@ class GitHubCog(commands.Cog):
             tracked_repo = db.query(GitHubRepo).filter(
                 GitHubRepo.repo_name == repo_name,
                 GitHubRepo.channel_id == str(ctx.channel.id),
-                GitHubRepo.is_active == True
+                GitHubRepo.is_active is True
             ).first()
 
             if not tracked_repo:
