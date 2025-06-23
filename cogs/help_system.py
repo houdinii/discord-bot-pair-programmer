@@ -1,20 +1,84 @@
-# cogs/help_system.py
+"""
+Help System for PairProgrammer Discord Bot
+
+This cog provides a comprehensive help system with categorized commands,
+usage tips, and command aliases. It replaces Discord.py's default help
+command with a more user-friendly and feature-rich help interface.
+
+Commands:
+    !help [category]: Show categorized help or general overview
+    !commands_table: Display all commands in compact table format
+    !tips: Show usage tips and best practices
+    !aliases [command]: Show command aliases and shortcuts
+
+Features:
+    - Categorized command organization (ai, docs, memory, github, admin)
+    - Command aliases and shortcuts display
+    - Usage tips and best practices
+    - Quick start examples for new users
+    - Paginated command reference tables
+
+Author: PairProgrammer Team
+"""
+
 import discord
 from discord.ext import commands
 from typing import Optional
 
 
 class HelpSystem(commands.Cog):
+    """
+    Dynamic help system cog providing categorized command help and usage guidance.
+    
+    This cog replaces the default Discord.py help command with a more comprehensive
+    and user-friendly help system that organizes commands by category and provides
+    usage tips, aliases, and best practices.
+    """
+    
     def __init__(self, bot):
+        """
+        Initialize the HelpSystem cog.
+        
+        Args:
+            bot (commands.Bot): The Discord bot instance
+        """
         self.bot = bot
 
     @commands.command(name='help', aliases=['h', '?', 'commands'])
     async def help_command(self, ctx, category: Optional[str] = None):
         """
-        Show help for bot commands
-        Usage: !help
-        Usage: !help ai
-        Usage: !help docs
+        Display categorized help information for bot commands.
+        
+        Shows either a general overview of all command categories with quick start
+        examples, or detailed information about a specific category of commands.
+        
+        Args:
+            category (Optional[str]): Specific category to show help for.
+                                    Options: 'ai', 'docs', 'memory', 'github', 'admin'
+        
+        Categories:
+            - ai: AI chat and conversation commands
+            - docs: Document upload, search, and analysis commands  
+            - memory: Memory storage and recall commands
+            - github: GitHub repository integration commands
+            - admin: Administrative and debugging commands
+            
+        Usage:
+            !help               # Show general overview and quick start
+            !help ai            # Show AI/chat commands
+            !help docs          # Show document management commands
+            !help memory        # Show memory system commands
+            !help github        # Show GitHub integration commands
+            !help admin         # Show admin and debug commands
+            
+        Aliases: h, ?, commands
+        
+        Example:
+            !help
+            # Shows: General overview with quick start examples
+            
+            !help ai
+            # Shows: All AI and chat-related commands with descriptions
         """
 
         # Define command categories with aliases
@@ -162,7 +226,33 @@ class HelpSystem(commands.Cog):
 
     @commands.command(name='commands_table', aliases=['ct', 'table', 'cmdtable'])
     async def list_all_commands(self, ctx):
-        """Show all commands in a compact table format"""
+        """
+        Display all available commands in a compact table format.
+        
+        Shows a comprehensive reference of all bot commands organized by category
+        in a compact, easy-to-scan table format across multiple pages. Includes
+        command syntax and aliases for quick reference.
+        
+        Usage:
+            !commands_table     # Show all commands in table format
+            
+        Aliases: ct, table, cmdtable
+        
+        Output:
+            Displays 3 pages of commands:
+            - Page 1: AI & Document commands
+            - Page 2: Memory & GitHub commands  
+            - Page 3: Admin & Debug commands
+            
+        Each entry shows:
+            - Full command syntax
+            - Available aliases
+            - Brief parameter information
+            
+        Example:
+            !commands_table
+            # Shows: Multi-page table with all commands and their aliases
+        """
 
         # Create pages for different command groups
         pages = []
@@ -259,7 +349,32 @@ HELP COMMANDS                    ALIASES
 
     @commands.command(name='tips', aliases=['tip', 'hints', 'howto'])
     async def show_tips(self, ctx):
-        """Show helpful tips and best practices"""
+        """
+        Display helpful tips and best practices for using the bot effectively.
+        
+        Provides practical guidance on how to get the most out of the bot's
+        features, including workflow recommendations, command shortcuts,
+        and productivity tips.
+        
+        Usage:
+            !tips               # Show all tips and best practices
+            
+        Aliases: tip, hints, howto
+        
+        Tips Include:
+            - Quick command shortcuts and aliases
+            - Effective memory usage strategies
+            - Better search techniques
+            - Document Q&A workflow
+            - GitHub integration tips
+            - AI conversation context tips
+            - Power user workflows
+            - Content refresh techniques
+            
+        Example:
+            !tips
+            # Shows: Comprehensive list of usage tips and best practices
+        """
 
         embed = discord.Embed(
             title="💡 Pro Tips & Best Practices",
@@ -311,9 +426,35 @@ HELP COMMANDS                    ALIASES
     @commands.command(name='aliases', aliases=['a', 'shortcuts'])
     async def show_aliases(self, ctx, command: Optional[str] = None):
         """
-        Show all aliases for a specific command or all commands
-        Usage: !aliases
-        Usage: !aliases chat
+        Display command aliases and shortcuts for faster bot usage.
+        
+        Shows either aliases for a specific command or a comprehensive list
+        of the most useful command shortcuts organized by category. Helps
+        users discover faster ways to interact with the bot.
+        
+        Args:
+            command (Optional[str]): Specific command name to show aliases for.
+                                   If not provided, shows most useful shortcuts.
+        
+        Usage:
+            !aliases            # Show most useful shortcuts by category
+            !aliases chat       # Show all aliases for the 'chat' command
+            !aliases upload     # Show all aliases for the 'upload' command
+            
+        Aliases: a, shortcuts
+        
+        Categories (when no command specified):
+            - Essential: Core commands like !q, !c, !h, !s
+            - Documents: File management shortcuts like !up, !f, !sf, !ad
+            - Memory: Memory system shortcuts like !r, !rc, !lm, !gm
+            - GitHub: Repository shortcuts like !cs, !i, !pr, !lr
+            
+        Example:
+            !aliases
+            # Shows: Categorized list of most useful command shortcuts
+            
+            !aliases chat
+            # Shows: All available aliases for the chat command (!c, !ask, !ai)
         """
         if command:
             # Show aliases for specific command
@@ -391,6 +532,19 @@ HELP COMMANDS                    ALIASES
 
 
 async def setup(bot):
+    """
+    Setup function to add the HelpSystem cog to the bot.
+    
+    This function replaces Discord.py's default help command with our
+    custom help system and adds the HelpSystem cog to the bot.
+    
+    Args:
+        bot (commands.Bot): The Discord bot instance to add the cog to
+        
+    Note:
+        This removes the default Discord.py help command to avoid conflicts
+        with our custom help system.
+    """
     # Remove default help command
     bot.remove_command('help')
     await bot.add_cog(HelpSystem(bot))
