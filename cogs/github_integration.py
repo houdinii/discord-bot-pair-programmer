@@ -276,7 +276,7 @@ class GitHubCog(commands.Cog):
             await ctx.send(f"❌ Error listing pull requests: {str(e)}")
             logger.logger.error(f"Error in list_pull_requests: {str(e)}", exc_info=True)
 
-    @commands.command(name='repoinfo', aliases=['ri', 'repo', 'about'])
+    @commands.command(name='repoinfo', aliases=['repo', 'about'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def repository_info(self, ctx, repo_name: str = None):
         """
