@@ -178,7 +178,7 @@ class HelpSystem(commands.Cog):
 AI COMMANDS                      ALIASES
 !chat [provider] [model] [msg]  c, ask, ai
 !quick [message]                 q, gpt, ask4
-!models                          model, lm
+!models                          model, listmodels
 !search [query]                  s, find, lookup
 !context [query]                 ctx, preview
 !autosave                        as, auto

@@ -235,17 +235,6 @@ class AIChatCog(commands.Cog):
             except Exception:
                 await ctx.send(f"❌ Error processing document question: {str(e)}")
 
-    @commands.command(name='compare', aliases=[])
-    @commands.cooldown(3, 60, commands.BucketType.user)
-    async def compare_documents(self, ctx, file_id1: int, file_id2: int):
-        """
-        Compare two documents
-        Usage: !compare 123 456
-        """
-        # Implementation for comparing two documents
-        # This would fetch both documents and ask AI to compare them
-        pass
-
     @commands.command(name='asksimple', aliases=[])
     @commands.cooldown(3, 60, commands.BucketType.user)
     async def ask_simple(self, ctx, file_id: int, *, question: str):
@@ -485,7 +474,7 @@ class AIChatCog(commands.Cog):
             logger.logger.error(f"Exception in !chat handler: {e}", exc_info=True)
             await ctx.send(f"❌ Error: {str(e)}")
 
-    @commands.command(name='models', aliases=['model', 'list_models', 'lm'])
+    @commands.command(name='models', aliases=['model', 'list_models'])
     @commands.cooldown(3, 60, commands.BucketType.user)
     @log_method()
     async def list_models(self, ctx):
