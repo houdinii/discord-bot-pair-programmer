@@ -31,7 +31,7 @@ class ArxivCog(commands.Cog):
         if hasattr(self, 'daily_suggestions'):
             self.daily_suggestions.cancel()
 
-    @commands.command(name='arxiv_search', aliases=['as', 'search_papers', 'find_papers'])
+    @commands.command(name='arxiv_search', aliases=['search_papers', 'find_papers'])
     @commands.cooldown(5, 60, commands.BucketType.user)
     async def search_arxiv(self, ctx, *, query: str):
         """
