@@ -29,11 +29,29 @@ class ArxivService:
         if 'arxiv.org' in paper_id:
             paper_id = paper_id.split('/')[-1]
 
-        # Remove version number (v1, v2, etc.)
+        # Remove version number (v1, v2, etc.) but be careful with old format
         if 'v' in paper_id:
-            paper_id = paper_id.split('v')[0]
+            # Old format: math-ph/0003065v1 -> math-ph/0003065
+            # New format: 2304.03442v1 -> 2304.03442
+            parts = paper_id.split('v')
+            if len(parts) == 2 and parts[1].isdigit():
+                paper_id = parts[0]
 
         return paper_id.strip()
+
+    # Also update the _short_id method:
+    @staticmethod
+    def _short_id(url: str):
+        """Convert https://arxiv.org/abs/XXXX.YYYYYvZ to proper format"""
+        paper_id = url.split("/")[-1]
+
+        # Remove version number
+        if 'v' in paper_id:
+            parts = paper_id.split('v')
+            if len(parts) == 2 and parts[1].isdigit():
+                paper_id = parts[0]
+
+        return paper_id
 
     @staticmethod
     def get_pdf_url(paper_id: str) -> str:
@@ -62,8 +80,15 @@ class ArxivService:
 
             results = []
             for result in client.results(search=search):
+                # Extract ID properly from the entry_id
+                # result.entry_id looks like: "http://arxiv.org/abs/2412.13419v1"
+                raw_id = result.entry_id.split('/')[-1]  # Get "2412.13419v1"
+
+                # Clean the ID properly
+                clean_id = self.clean_paper_id(raw_id)
+
                 paper_data = {
-                    'id': self.clean_paper_id(result.entry_id),
+                    'id': clean_id,  # Use the cleaned ID
                     'title': result.title.strip(),
                     'authors': [author.name for author in result.authors],
                     'abstract': result.summary.strip(),
@@ -71,8 +96,8 @@ class ArxivService:
                     'updated': result.updated,
                     'categories': result.categories,
                     'primary_category': result.primary_category,
-                    'pdf_url': self.get_pdf_url(result.entry_id),
-                    'abs_url': self.get_abs_url(result.entry_id),
+                    'pdf_url': self.get_pdf_url(clean_id),  # Use cleaned ID
+                    'abs_url': self.get_abs_url(clean_id),  # Use cleaned ID
                     'journal_ref': getattr(result, 'journal_ref', None),
                     'doi': getattr(result, 'doi', None)
                 }

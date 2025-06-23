@@ -642,7 +642,7 @@ class VectorService:
     async def get_context_for_ai(self, query: str,
                                  channel_id: str,
                                  max_context_length: int = 3000) -> str:
-        """Get relevant context for AI, including recently loaded papers"""
+        """Get relevant context for AI, including recent conversation history"""
 
         logger.log_data('IN', 'GET_AI_CONTEXT', {
             'query': query[:100] + '...' if len(query) > 100 else query,
@@ -651,8 +651,22 @@ class VectorService:
             'max_context_length': max_context_length
         })
 
-        # First, check if the query is about a recently loaded paper
-        # Look for phrases that indicate they're asking about "the paper"
+        # Check for short responses that might be continuing a conversation
+        short_responses = ['yes', 'no', 'sure', 'okay', 'continue', 'go ahead', 'tell me more']
+        is_short_response = query.lower().strip() in short_responses or len(query.strip()) < 10
+
+        # Get recent conversation history (especially important for short responses)
+        recent_conversations = await self.search_similar(
+            query="conversation" if not is_short_response else query,
+            channel_id=channel_id,
+            content_type=['conversation'],
+            top_k=10 if is_short_response else 5  # More history for short responses
+        )
+
+        # Sort conversations by timestamp to get the most recent
+        recent_conversations.sort(key=lambda x: x['metadata'].get('timestamp', ''), reverse=True)
+
+        # Check if the query is about a recently loaded paper
         asking_about_paper = any(phrase in query.lower() for phrase in [
             'the paper', 'this paper', 'loaded paper', 'about it',
             'what is it about', 'tell me about', 'summarize it'
@@ -660,93 +674,140 @@ class VectorService:
 
         results = []
 
-        # If asking about a paper, prioritize recently loaded arXiv papers
-        if asking_about_paper:
-            # Search specifically for recently loaded papers
-            arxiv_results = await self.search_similar(
-                query="arxiv paper loaded user",  # Broad search to get recent papers
+        # For short responses, prioritize recent conversation context
+        if is_short_response:
+            # Add the most recent conversations first
+            results.extend(recent_conversations[:5])
+
+            # Also look for the last loaded paper
+            last_paper_memory = await self.search_similar(
+                query="last_loaded_paper",
                 channel_id=channel_id,
-                content_type=['arxiv_paper'],
-                top_k=20
+                content_type=['memory'],
+                top_k=3
+            )
+            results.extend(last_paper_memory)
+
+        # If asking about a paper, look for the last_loaded_paper memory
+        if asking_about_paper:
+            last_paper_memory = await self.search_similar(
+                query="last_loaded_paper",
+                channel_id=channel_id,
+                content_type=['memory'],
+                top_k=5
             )
 
-            # Sort by load timestamp to get most recent
-            arxiv_with_timestamps = []
-            for result in arxiv_results:
-                load_timestamp = result['metadata'].get('load_timestamp')
-                if load_timestamp:
-                    arxiv_with_timestamps.append((load_timestamp, result))
+            current_paper_id = None
+            for result in last_paper_memory:
+                if result['metadata'].get('tag') == 'last_loaded_paper':
+                    content = result['metadata'].get('content', '')
+                    import re
+                    paper_id_match = re.search(r'Paper ID: ([^,]+)', content)
+                    if paper_id_match:
+                        current_paper_id = paper_id_match.group(1).strip()
+                        break
 
-            # Sort by timestamp (most recent first)
-            arxiv_with_timestamps.sort(key=lambda x: x[0], reverse=True)
+            if current_paper_id:
+                arxiv_results = await self.search_similar(
+                    query=f"arxiv_id:{current_paper_id}",
+                    channel_id=channel_id,
+                    content_type=['arxiv_paper'],
+                    top_k=15
+                )
 
-            # Add the most recent paper's chunks to results
-            if arxiv_with_timestamps:
-                most_recent_paper_id = arxiv_with_timestamps[0][1]['metadata'].get('arxiv_id')
-
-                # Get all chunks from this paper
-                for _, result in arxiv_with_timestamps:
-                    if result['metadata'].get('arxiv_id') == most_recent_paper_id:
+                for result in arxiv_results:
+                    if result['metadata'].get('arxiv_id') == current_paper_id:
                         results.append(result)
 
-        # Also do a general search based on the query
-        general_results = await self.search_similar(
-            query=query,
-            channel_id=channel_id,
-            top_k=25
-        )
+            results.extend(last_paper_memory)
 
-        # Also do a specific document search
-        doc_results = await self.search_documents(
-            query=query,
-            channel_id=channel_id,
-            top_k=10
-        )
+        # General search for other relevant content
+        if not is_short_response:  # Skip general search for short responses to prioritize conversation
+            general_results = await self.search_similar(
+                query=query,
+                channel_id=channel_id,
+                top_k=20
+            )
+            results.extend(general_results)
 
-        # Combine and deduplicate results
-        all_results = results + general_results + doc_results
+            doc_results = await self.search_documents(
+                query=query,
+                channel_id=channel_id,
+                top_k=10
+            )
+            results.extend(doc_results)
+
+        # Add recent conversations if not already included
+        if not is_short_response:
+            results.extend(recent_conversations)
+
+        # Deduplicate results
         seen_ids = set()
         unique_results = []
 
-        for result in all_results:
+        for result in results:
             result_id = result.get('id') or result['metadata'].get('id')
             if result_id not in seen_ids:
                 seen_ids.add(result_id)
                 unique_results.append(result)
 
-        # Sort by score, but boost recent arXiv papers
+        # Sort with special priority for conversation context
         def sort_key(result):
             score = result.get('score', 0)
-            # Boost recently loaded arXiv papers
-            if result['metadata'].get('type') == 'arxiv_paper':
-                load_timestamp = result['metadata'].get('load_timestamp')
-                if load_timestamp:
-                    # Papers loaded in the last hour get a big boost
+            metadata = result['metadata']
+
+            # For short responses, heavily prioritize recent conversations
+            if is_short_response and metadata.get('type') == 'conversation':
+                timestamp = metadata.get('timestamp', '')
+                try:
                     from datetime import datetime, timezone, timedelta
+                    msg_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    time_diff = datetime.now(timezone.utc) - msg_time
+
+                    # Very recent conversations get huge boost
+                    if time_diff < timedelta(minutes=5):
+                        score += 5.0
+                    elif time_diff < timedelta(minutes=30):
+                        score += 3.0
+                    elif time_diff < timedelta(hours=2):
+                        score += 1.0
+                except:
+                    pass
+
+            # Boost recently loaded arXiv papers
+            if metadata.get('type') == 'arxiv_paper':
+                load_timestamp = metadata.get('load_timestamp')
+                if load_timestamp:
                     try:
+                        from datetime import datetime, timezone, timedelta
                         load_time = datetime.fromisoformat(load_timestamp.replace('Z', '+00:00'))
                         time_diff = datetime.now(timezone.utc) - load_time
                         if time_diff < timedelta(hours=1):
-                            score += 2.0  # Big boost for very recent
+                            score += 2.0
                         elif time_diff < timedelta(days=1):
-                            score += 1.0  # Moderate boost for today
+                            score += 1.0
                     except:
                         pass
+
             return score
 
         unique_results.sort(key=sort_key, reverse=True)
 
-        # Build context
+        # Build context with emphasis on conversation flow for short responses
         parts = []
         length = 0
-        text = ""
         used_results = 0
-        used_files = {}
-        included_papers = set()
+        conversation_count = 0
 
         for result in unique_results:
-            # Score threshold (lowered for arxiv papers)
-            min_score = 0.3 if result['metadata'].get('type') == 'arxiv_paper' else 0.5
+            # For short responses, include more conversation context
+            if is_short_response and result['metadata'].get('type') == 'conversation':
+                if conversation_count >= 3:  # Limit conversations but allow more for context
+                    continue
+                conversation_count += 1
+
+            # Score threshold
+            min_score = 0.2 if is_short_response else 0.5
             if result.get("score", 1) < min_score:
                 continue
 
@@ -754,50 +815,33 @@ class VectorService:
             content = result.get('content', '')
 
             # Build context text based on type
-            if md.get("type") == "arxiv_paper":
-                arxiv_id = md.get('arxiv_id')
-                if arxiv_id and arxiv_id not in included_papers:
-                    included_papers.add(arxiv_id)
-
-                    # Extract actual content
-                    if "Content:\n" in content:
-                        actual_content = content.split("Content:\n", 1)[1]
-                    else:
-                        actual_content = content
-
-                    # Include paper metadata for better context
-                    title = md.get('title', 'Unknown')
-                    authors = md.get('authors', 'Unknown')
-                    chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
-
-                    text = f"[arXiv Paper: {title}]\n"
-                    text += f"Paper ID: {arxiv_id}\n"
-                    text += f"Authors: {authors}\n"
-                    text += f"{chunk_info}\n"
-                    text += f"Content: {actual_content[:800]}..."
-
-            elif md["type"] == "conversation":
+            if md.get("type") == "conversation":
                 timestamp = md.get('timestamp', 'Unknown time')
-                text = f"[Previous conversation - {timestamp[:19]}]\n"
+                # For recent conversations, show more detail
+                text = f"[Recent conversation - {timestamp[:19]}]\n"
                 text += f"User: {md.get('message', 'N/A')}\n"
                 text += f"Assistant: {md.get('response', 'N/A')}"
+
+            elif md.get("type") == "arxiv_paper":
+                arxiv_id = md.get('arxiv_id')
+                if "Content:\n" in content:
+                    actual_content = content.split("Content:\n", 1)[1]
+                else:
+                    actual_content = content
+
+                title = md.get('title', 'Unknown')
+                chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
+
+                text = f"[arXiv Paper: {title}]\n"
+                text += f"Paper ID: {arxiv_id}\n"
+                text += f"{chunk_info}\n"
+                text += f"Content: {actual_content[:800]}..."
 
             elif md["type"] == "memory":
                 text = f"[Saved Memory - {md.get('tag', 'N/A')}]\n{md.get('content', 'N/A')}"
 
             elif md["type"] == "document":
-                file_id = md.get('file_id')
                 filename = md.get('filename', 'Unknown')
-
-                if file_id:
-                    if file_id not in used_files:
-                        used_files[file_id] = 0
-
-                    if used_files[file_id] >= 3:
-                        continue
-
-                    used_files[file_id] += 1
-
                 chunk_info = f"Part {md.get('chunk_index', 0) + 1}/{md.get('total_chunks', 1)}"
 
                 if "Content:\n" in content:
@@ -832,10 +876,9 @@ class VectorService:
         logger.log_data('OUT', 'AI_CONTEXT_BUILT', {
             'total_length': len(context),
             'parts_used': used_results,
+            'conversation_parts': conversation_count,
+            'is_short_response': is_short_response,
             'total_results': len(unique_results),
-            'unique_documents': len(used_files),
-            'arxiv_papers_included': len(included_papers),
-            'document_chunks_used': sum(used_files.values()),
             'context_preview': context[:200] + '...' if len(context) > 200 else context,
             'namespace': channel_id
         })
