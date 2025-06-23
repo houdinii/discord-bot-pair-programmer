@@ -1,13 +1,13 @@
+from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands, tasks
-from datetime import datetime, timezone
-from typing import List, Optional
-import asyncio
 
-from services.arxiv_service import ArxivService
-from services.ai_service import AIService
-from services.vector_service import VectorService
 from config import ARXIV_SUGGESTION_CHANNEL
+from services.ai_service import AIService
+from services.arxiv_service import ArxivService
+from services.recommendation_service import RecommendationService
+from services.vector_service import VectorService
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,9 +21,13 @@ class ArxivCog(commands.Cog):
         self.arxiv_service = ArxivService()
         self.ai_service = AIService()
         self.vector_service = VectorService()
+        self.recommendation_service = RecommendationService(
+            self.vector_service,
+            self.arxiv_service
+        )
 
         # Start suggestion task if channel is configured
-        if hasattr(self, 'ARXIV_SUGGESTION_CHANNEL') and ARXIV_SUGGESTION_CHANNEL:
+        if hasattr('ARXIV_SUGGESTION_CHANNEL') and ARXIV_SUGGESTION_CHANNEL:
             self.daily_suggestions.start()
 
     def cog_unload(self):
@@ -811,44 +815,88 @@ class ArxivCog(commands.Cog):
 
     @tasks.loop(hours=24)
     async def daily_suggestions(self):
-        """Send daily paper suggestions to configured channel"""
+        """Send personalized daily paper suggestions based on context"""
         try:
-            if not hasattr(self, 'ARXIV_SUGGESTION_CHANNEL') or not ARXIV_SUGGESTION_CHANNEL:
+            if not hasattr('ARXIV_SUGGESTION_CHANNEL') or not ARXIV_SUGGESTION_CHANNEL:
                 return
 
             channel = self.bot.get_channel(int(ARXIV_SUGGESTION_CHANNEL))
             if not channel:
                 return
 
-            # Get recent papers in AI/ML categories
-            categories = ['cs.AI', 'cs.LG', 'cs.CL', 'cs.CV']
-            papers = await self.arxiv_service.get_paper_suggestions(categories, max_results=3)
+            logger.logger.info(f"Generating daily suggestions for channel {channel.id}")
 
-            if not papers:
-                return
+            # Get personalized recommendations
+            recommendations = await self.recommendation_service.get_personalized_recommendations(
+                channel_id=str(channel.id),
+                max_results=5
+            )
 
+            # If no personalized recommendations, fall back to trending papers
+            if not recommendations:
+                logger.logger.info("No personalized recommendations, using trending papers")
+                categories = ['cs.AI', 'cs.LG', 'cs.CL', 'cs.CV']
+                recommendations = await self.arxiv_service.get_paper_suggestions(
+                    categories,
+                    max_results=5
+                )
+                recommendation_summary = "Today's trending AI/ML papers"
+            else:
+                # Generate summary of why these were recommended
+                recommendation_summary = await self.recommendation_service.generate_recommendation_summary(
+                    str(channel.id),
+                    recommendations
+                )
+
+            # Create embed with recommendations
             embed = discord.Embed(
-                title="📅 Daily arXiv Suggestions",
-                description=f"Fresh papers from {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                title="🌅 Your Daily arXiv Recommendations",
+                description=recommendation_summary,
                 color=0x00ff88,
                 timestamp=datetime.now(timezone.utc)
             )
 
-            for paper in papers:
-                pub_date = paper['published'].strftime('%Y-%m-%d') if paper['published'] else 'Unknown'
+            # Add paper details
+            for i, paper in enumerate(recommendations[:4], 1):
+                pub_date = paper['published'].strftime('%Y-%m-%d') if paper.get('published') else 'Unknown'
+
+                # Build field value
+                field_value = f"**ID:** `{paper['id']}`\n"
+                field_value += f"**Authors:** {', '.join(paper['authors'][:2])}\n"
+                field_value += f"**Published:** {pub_date}\n"
+
+                # Add relevance reason if available
+                if paper.get('relevance_reason'):
+                    field_value += f"**Why:** {paper['relevance_reason']}\n"
+
+                field_value += f"[View Abstract]({paper['abs_url']})"
 
                 embed.add_field(
-                    name=f"📄 {paper['title'][:50]}{'...' if len(paper['title']) > 50 else ''}",
-                    value=f"**ID:** `{paper['id']}`\n"
-                          f"**Authors:** {', '.join(paper['authors'][:2])}\n"
-                          f"**Published:** {pub_date}\n"
-                          f"[View Abstract]({paper['abs_url']})",
+                    name=f"{i}. {paper['title'][:60]}{'...' if len(paper['title']) > 60 else ''}",
+                    value=field_value,
                     inline=False
                 )
 
-            embed.set_footer(text="Use !arxiv_load [paper_id] to analyze any paper")
+            # Add interaction analysis
+            interests = await self.recommendation_service.analyze_user_interests(str(channel.id))
+
+            if interests['total_interactions'] > 0:
+                stats_text = f"📊 Based on {interests['total_interactions']} interactions"
+                if interests['top_keywords']:
+                    top_keywords = [kw for kw, _ in interests['top_keywords'][:3]]
+                    stats_text += f"\n🔑 Top interests: {', '.join(top_keywords)}"
+
+                embed.add_field(
+                    name="Your Research Profile",
+                    value=stats_text,
+                    inline=False
+                )
+
+            embed.set_footer(text="💡 Load papers with !arxiv_load to improve recommendations")
 
             await channel.send(embed=embed)
+
+            logger.logger.info(f"Sent {len(recommendations)} personalized recommendations")
 
         except Exception as e:
             logger.logger.error(f"Error in daily suggestions: {e}", exc_info=True)
@@ -858,6 +906,320 @@ class ArxivCog(commands.Cog):
         """Wait for bot to be ready before starting suggestions"""
         await self.bot.wait_until_ready()
 
+    # Add a manual command to trigger recommendations
+    @commands.command(name='arxiv_suggest', aliases=['suggest', 'daily'])
+    @commands.cooldown(1, 3600, commands.BucketType.channel)  # Once per hour per channel
+    async def manual_suggestions(self, ctx):
+        """
+        Get personalized paper suggestions based on your activity
+
+        Analyzes your:
+        - Loaded papers and documents
+        - Conversations about research
+        - Saved memories and notes
+        - GitHub repositories
+
+        Usage:
+            !arxiv_suggest
+            !suggest
+            !daily
+        """
+        status_msg = await ctx.send("🔍 Analyzing your research interests...")
+
+        try:
+            async with ctx.typing():
+                # Get personalized recommendations
+                recommendations = await self.recommendation_service.get_personalized_recommendations(
+                    channel_id=str(ctx.channel.id),
+                    max_results=6
+                )
+
+                # Get interest analysis
+                interests = await self.recommendation_service.analyze_user_interests(
+                    str(ctx.channel.id)
+                )
+
+                await status_msg.delete()
+
+                # Create main embed
+                embed = discord.Embed(
+                    title="🎯 Personalized Paper Recommendations",
+                    description=await self.recommendation_service.generate_recommendation_summary(
+                        str(ctx.channel.id),
+                        recommendations
+                    ),
+                    color=0x00ff88
+                )
+
+                # Add recommendations
+                if recommendations:
+                    for i, paper in enumerate(recommendations[:4], 1):
+                        pub_date = paper['published'].strftime('%Y-%m-%d') if paper.get('published') else 'Unknown'
+
+                        field_value = f"**ID:** `{paper['id']}`\n"
+
+                        # Show relevance score if available
+                        if paper.get('relevance_score'):
+                            field_value += f"**Relevance:** {paper['relevance_score']:.1f}/100\n"
+
+                        if paper.get('relevance_reason'):
+                            field_value += f"**Match:** {paper['relevance_reason']}\n"
+
+                        field_value += f"**Published:** {pub_date}\n"
+                        field_value += f"[View]({paper['abs_url']})"
+
+                        embed.add_field(
+                            name=f"{i}. {paper['title'][:50]}{'...' if len(paper['title']) > 50 else ''}",
+                            value=field_value,
+                            inline=False
+                        )
+                else:
+                    embed.add_field(
+                        name="No personalized recommendations yet",
+                        value="Load some papers and interact with them to get personalized suggestions!",
+                        inline=False
+                    )
+
+                # Add interest profile
+                if interests['total_interactions'] > 0:
+                    profile_parts = []
+
+                    if interests['top_keywords']:
+                        top_kw = [kw for kw, count in interests['top_keywords'][:5]]
+                        profile_parts.append(f"**Keywords:** {', '.join(top_kw)}")
+
+                    if interests['top_categories']:
+                        top_cat = [cat for cat, _ in interests['top_categories'][:3]]
+                        profile_parts.append(f"**Categories:** {', '.join(top_cat)}")
+
+                    if interests['total_papers'] > 0:
+                        profile_parts.append(f"**Papers analyzed:** {interests['total_papers']}")
+
+                    embed.add_field(
+                        name="📊 Your Research Profile",
+                        value="\n".join(profile_parts) if profile_parts else "Building your profile...",
+                        inline=False
+                    )
+
+                embed.set_footer(text="Recommendations improve as you use the bot more!")
+
+                await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.logger.error(f"Error generating suggestions: {e}", exc_info=True)
+            await status_msg.edit(content=f"❌ Error generating suggestions: {str(e)}")
+
+    # Add a command to analyze research interests
+    @commands.command(name='arxiv_profile', aliases=['research_profile', 'my_interests'])
+    @commands.cooldown(3, 60, commands.BucketType.user)
+    async def show_research_profile(self, ctx):
+        """
+        Show your research profile based on your activity
+
+        Displays:
+        - Top research interests
+        - Frequently accessed papers
+        - Preferred categories
+        - Favorite authors
+
+        Usage:
+            !arxiv_profile
+            !research_profile
+            !my_interests
+        """
+        status_msg = await ctx.send("📊 Analyzing your research profile...")
+
+        try:
+            async with ctx.typing():
+                interests = await self.recommendation_service.analyze_user_interests(
+                    str(ctx.channel.id),
+                    days_back=90  # Look at last 3 months
+                )
+
+                await status_msg.delete()
+
+                embed = discord.Embed(
+                    title="🔬 Your Research Profile",
+                    description=f"Based on {interests['total_interactions']} interactions",
+                    color=0x9932cc
+                )
+
+                # Top keywords/interests
+                if interests['top_keywords']:
+                    keywords_text = "\n".join([
+                        f"• **{kw}** ({count} mentions)"
+                        for kw, count in interests['top_keywords'][:8]
+                    ])
+                    embed.add_field(
+                        name="🔑 Research Interests",
+                        value=keywords_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+
+                # Top categories
+                if interests['top_categories']:
+                    categories_text = "\n".join([
+                        f"• **{cat}** ({count} papers)"
+                        for cat, count in interests['top_categories']
+                    ])
+                    embed.add_field(
+                        name="📚 Preferred Categories",
+                        value=categories_text,
+                        inline=True
+                    )
+
+                # Top authors
+                if interests['top_authors']:
+                    authors_text = "\n".join([
+                        f"• {author[:30]}"
+                        for author, _ in interests['top_authors']
+                    ])
+                    embed.add_field(
+                        name="👥 Followed Authors",
+                        value=authors_text,
+                        inline=True
+                    )
+
+                # Statistics
+                stats_text = f"📄 Papers loaded: **{interests['total_papers']}**\n"
+                stats_text += f"💬 Total interactions: **{interests['total_interactions']}**"
+
+                embed.add_field(
+                    name="📈 Activity Stats",
+                    value=stats_text,
+                    inline=False
+                )
+
+                # Recommendations
+                embed.add_field(
+                    name="💡 Improve Your Profile",
+                    value="• Load more papers with `!arxiv_load`\n"
+                          "• Ask questions with `!q` about papers\n"
+                          "• Save insights with `!remember`\n"
+                          "• Get suggestions with `!arxiv_suggest`",
+                    inline=False
+                )
+
+                await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.logger.error(f"Error showing research profile: {e}", exc_info=True)
+            await status_msg.edit(content=f"❌ Error analyzing profile: {str(e)}")
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Monitor for research discussions and suggest papers when relevant"""
+        # Don't respond to bots or DMs
+        if message.author.bot or not message.guild:
+            return
+
+        # Check if message mentions research topics
+        research_triggers = [
+            "looking for papers",
+            "any papers about",
+            "research on",
+            "studies about",
+            "literature on",
+            "papers related to",
+            "recommendations for"
+        ]
+
+        message_lower = message.content.lower()
+
+        for trigger in research_triggers:
+            if trigger in message_lower:
+                # Extract the topic after the trigger
+                topic_start = message_lower.find(trigger) + len(trigger)
+                topic = message.content[topic_start:].strip()
+
+                # Limit topic length
+                if len(topic) > 100:
+                    topic = topic[:100]
+
+                # Suggest searching
+                embed = discord.Embed(
+                    title="📚 Paper Search Helper",
+                    description=f"I noticed you're looking for research papers!",
+                    color=0x00ff88
+                )
+
+                embed.add_field(
+                    name="Quick Actions",
+                    value=f"• `!arxiv_search {topic}` - Search for papers\n"
+                          f"• `!arxiv_suggest` - Get personalized recommendations\n"
+                          f"• `!arxiv_recommend {topic}` - Topic-based suggestions",
+                    inline=False
+                )
+
+                await message.reply(embed=embed, mention_author=False)
+                break
+
+    # Add a weekly summary task
+    @tasks.loop(hours=168)  # Weekly
+    async def weekly_research_summary(self):
+        """Send weekly research summary and recommendations"""
+        try:
+            if not hasattr('ARXIV_SUGGESTION_CHANNEL') or not ARXIV_SUGGESTION_CHANNEL:
+                return
+
+            channel = self.bot.get_channel(int(ARXIV_SUGGESTION_CHANNEL))
+            if not channel:
+                return
+
+            # Analyze the week's activity
+            interests = await self.recommendation_service.analyze_user_interests(
+                str(channel.id),
+                days_back=7
+            )
+
+            # Get recommendations
+            recommendations = await self.recommendation_service.get_personalized_recommendations(
+                channel_id=str(channel.id),
+                max_results=10
+            )
+
+            embed = discord.Embed(
+                title="📊 Weekly Research Summary",
+                description="Your research activity this week",
+                color=0xffd700,
+                timestamp=datetime.now(timezone.utc)
+            )
+
+            # Activity summary
+            if interests['total_interactions'] > 0:
+                activity_text = f"• Interactions: **{interests['total_interactions']}**\n"
+
+                if interests['total_papers'] > 0:
+                    activity_text += f"• Papers explored: **{interests['total_papers']}**\n"
+
+                if interests['top_keywords']:
+                    top_topics = [kw for kw, _ in interests['top_keywords'][:3]]
+                    activity_text += f"• Top topics: {', '.join(top_topics)}"
+
+                embed.add_field(
+                    name="📈 This Week's Activity",
+                    value=activity_text,
+                    inline=False
+                )
+
+            # Top recommendations for next week
+            if recommendations:
+                rec_text = ""
+                for i, paper in enumerate(recommendations[:5], 1):
+                    rec_text += f"{i}. [{paper['title'][:40]}...]({paper['abs_url']})\n"
+
+                embed.add_field(
+                    name="🎯 Recommended for Next Week",
+                    value=rec_text,
+                    inline=False
+                )
+
+            embed.set_footer(text="Keep exploring! Your recommendations improve with usage.")
+
+            await channel.send(embed=embed)
+
+        except Exception as e:
+            logger.logger.error(f"Error in weekly summary: {e}", exc_info=True)
 
 async def setup(bot):
     await bot.add_cog(ArxivCog(bot))
